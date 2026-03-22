@@ -8,7 +8,7 @@ export function useProfiles() {
 
   const fetchProfiles = useCallback(async () => {
     try {
-      const data = await window.go.main.App.GetProfiles()
+      const data = await window.go.app.App.GetProfiles()
       setProfiles(data || [])
       setError(null)
     } catch (err) {
@@ -26,7 +26,7 @@ export function useProfiles() {
 
   const connect = async (id: string) => {
     try {
-      await window.go.main.App.Connect(id)
+      await window.go.app.App.Connect(id)
       await fetchProfiles()
     } catch (err) {
       throw err
@@ -35,7 +35,7 @@ export function useProfiles() {
 
   const disconnect = async (id: string) => {
     try {
-      await window.go.main.App.Disconnect(id)
+      await window.go.app.App.Disconnect(id)
       await fetchProfiles()
     } catch (err) {
       throw err
@@ -44,7 +44,7 @@ export function useProfiles() {
 
   const deleteProfile = async (id: string) => {
     try {
-      await window.go.main.App.DeleteProfile(id)
+      await window.go.app.App.DeleteProfile(id)
       await fetchProfiles()
     } catch (err) {
       throw err
@@ -53,7 +53,7 @@ export function useProfiles() {
 
   const getProfile = async (id: string): Promise<Profile | null> => {
     try {
-      return await window.go.main.App.GetProfile(id)
+      return await window.go.app.App.GetProfile(id)
     } catch (err) {
       throw err
     }

@@ -4,7 +4,7 @@ export {}
 declare global {
   interface Window {
     go: {
-      main: {
+      app: {
         App: {
           GetProfiles: () => Promise<ProfileStatus[]>
           GetProfile: (id: string) => Promise<Profile | null>

@@ -11,9 +11,9 @@ function ActiveConnections() {
     const fetchData = async () => {
       try {
         const [conns, enabled, count] = await Promise.all([
-          window.go.main.App.GetActiveConnections(),
-          window.go.main.App.IsTCPProxyEnabled(),
-          window.go.main.App.GetTCPProxyListenerCount()
+          window.go.app.App.GetActiveConnections(),
+          window.go.app.App.IsTCPProxyEnabled(),
+          window.go.app.App.GetTCPProxyListenerCount()
         ])
         setConnections(conns || [])
         setTcpProxyEnabled(enabled)

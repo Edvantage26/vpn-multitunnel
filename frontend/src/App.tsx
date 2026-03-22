@@ -69,7 +69,7 @@ export interface SystemStatus {
   dnsProxyPort: number
 }
 
-// DNSConfigResult is imported from wailsjs/go/models.ts (main.DNSConfigResult)
+// DNSConfigResult is imported from wailsjs/go/models.ts (app.DNSConfigResult)
 
 export interface Settings {
   logLevel: string
@@ -93,7 +93,7 @@ export interface UpdateSettingsResult {
 declare global {
   interface Window {
     go: {
-      main: {
+      app: {
         App: {
           GetProfiles: () => Promise<ProfileStatus[]>
           GetProfile: (id: string) => Promise<Profile>
@@ -147,7 +147,7 @@ function App() {
 
   const fetchProfiles = useCallback(async () => {
     try {
-      const data = await window.go.main.App.GetProfiles()
+      const data = await window.go.app.App.GetProfiles()
       setProfiles(data || [])
       setError(null)
     } catch (err) {
@@ -159,7 +159,7 @@ function App() {
 
   const fetchSystemStatus = useCallback(async () => {
     try {
-      const status = await window.go.main.App.GetSystemStatus()
+      const status = await window.go.app.App.GetSystemStatus()
       setSystemStatus(previous_status => {
         // Detect DNS configuration change: false → true
         if (previous_status && !previous_status.dnsConfigured && status.dnsConfigured) {
@@ -178,7 +178,7 @@ function App() {
 
   const fetchSelectedProfile = useCallback(async (id: string) => {
     try {
-      const profile = await window.go.main.App.GetProfile(id)
+      const profile = await window.go.app.App.GetProfile(id)
       setSelectedProfile(profile)
     } catch (err) {
       console.error('Failed to fetch profile:', err)
@@ -206,7 +206,7 @@ function App() {
     console.log('[App] handleConnect called for:', id)
     try {
       console.log('[App] Calling backend Connect...')
-      await window.go.main.App.Connect(id)
+      await window.go.app.App.Connect(id)
       console.log('[App] Connect succeeded')
       showNotification('success', 'Connected successfully')
       await fetchProfiles()
@@ -220,7 +220,7 @@ function App() {
     console.log('[App] handleDisconnect called for:', id)
     try {
       console.log('[App] Calling backend Disconnect...')
-      await window.go.main.App.Disconnect(id)
+      await window.go.app.App.Disconnect(id)
       console.log('[App] Disconnect succeeded')
       showNotification('success', 'Disconnected')
       await fetchProfiles()
@@ -233,7 +233,7 @@ function App() {
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this tunnel?')) return
     try {
-      await window.go.main.App.DeleteProfile(id)
+      await window.go.app.App.DeleteProfile(id)
       showNotification('success', 'Tunnel deleted')
       if (selectedId === id) {
         setSelectedId(undefined)
@@ -258,7 +258,7 @@ function App() {
 
   const handleUpdateProfile = async (profile: Profile) => {
     try {
-      await window.go.main.App.UpdateProfile(profile)
+      await window.go.app.App.UpdateProfile(profile)
       showNotification('success', 'Profile updated')
       await fetchProfiles()
       await fetchSelectedProfile(profile.id)
@@ -274,7 +274,7 @@ function App() {
     setProfiles(reordered)
 
     try {
-      await window.go.main.App.ReorderProfiles(orderedIDs)
+      await window.go.app.App.ReorderProfiles(orderedIDs)
     } catch (err) {
       console.error('Failed to reorder profiles:', err)
       await fetchProfiles()

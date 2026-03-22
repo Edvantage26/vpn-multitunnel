@@ -98,7 +98,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     setIsImporting(true)
     setImportError('')
     try {
-      const profile = await window.go.main.App.ImportConfig()
+      const profile = await window.go.app.App.ImportConfig()
       setImportedProfile(profile)
       setProfileDisplayName(profile.name)
     } catch (err) {
@@ -116,7 +116,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     if (profile_display_name !== imported_profile.name) {
       try {
         const updated_profile = { ...imported_profile, name: profile_display_name }
-        await window.go.main.App.UpdateProfile(updated_profile)
+        await window.go.app.App.UpdateProfile(updated_profile)
         setImportedProfile(updated_profile)
       } catch (err) {
         setImportError(`Failed to update name: ${err}`)
@@ -155,7 +155,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
           domains: [dns_suffix_input],
         },
       }
-      await window.go.main.App.UpdateProfile(updated_profile)
+      await window.go.app.App.UpdateProfile(updated_profile)
       setImportedProfile(updated_profile)
       setCurrentStep(3)
     } catch (err) {
@@ -170,7 +170,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     setIsConnecting(true)
     setConnectionError('')
     try {
-      await window.go.main.App.Connect(imported_profile.id)
+      await window.go.app.App.Connect(imported_profile.id)
       setIsConnected(true)
     } catch (err) {
       setConnectionError(String(err))
@@ -192,7 +192,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     setIsTesting(true)
     setTestResult(null)
     try {
-      const [success, message] = await window.go.main.App.TestConnection(imported_profile.id, hostname, port_number)
+      const [success, message] = await window.go.app.App.TestConnection(imported_profile.id, hostname, port_number)
       setTestResult({ success, message })
     } catch (err) {
       setTestResult({ success: false, message: String(err) })
@@ -204,7 +204,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
   const handleStep3Back = async () => {
     if (is_connected && imported_profile) {
       try {
-        await window.go.main.App.Disconnect(imported_profile.id)
+        await window.go.app.App.Disconnect(imported_profile.id)
       } catch (_err) {
         // Best effort disconnect
       }
@@ -234,12 +234,12 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
       // Disconnect if connected
       if (is_connected) {
         try {
-          await window.go.main.App.Disconnect(imported_profile.id)
+          await window.go.app.App.Disconnect(imported_profile.id)
         } catch (_err) { /* best effort */ }
       }
       // Delete the profile
       try {
-        await window.go.main.App.DeleteProfile(imported_profile.id)
+        await window.go.app.App.DeleteProfile(imported_profile.id)
       } catch (_err) { /* best effort */ }
     }
     onClose()

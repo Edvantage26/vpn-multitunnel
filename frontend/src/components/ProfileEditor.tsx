@@ -56,7 +56,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
     setConfigLoading(true)
     setConfigError('')
     try {
-      const content = await window.go.main.App.GetConfigFileContent(profile.id)
+      const content = await window.go.app.App.GetConfigFileContent(profile.id)
       setConfigContent(content)
     } catch (err) {
       setConfigError(String(err))
@@ -70,7 +70,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
     setConfigError('')
     setConfigSaved(false)
     try {
-      await window.go.main.App.SaveConfigFileContent(profile.id, configContent)
+      await window.go.app.App.SaveConfigFileContent(profile.id, configContent)
       setConfigSaved(true)
       setTimeout(() => setConfigSaved(false), 2000)
     } catch (err) {

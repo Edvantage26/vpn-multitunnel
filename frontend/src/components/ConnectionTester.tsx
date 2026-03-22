@@ -28,7 +28,7 @@ function ConnectionTester({ profileId, profileName, isConnected }: ConnectionTes
     setResult(null)
 
     try {
-      const [success, message] = await window.go.main.App.TestConnection(profileId, host, portNum)
+      const [success, message] = await window.go.app.App.TestConnection(profileId, host, portNum)
       setResult({ success, message })
     } catch (err) {
       setResult({ success: false, message: String(err) })

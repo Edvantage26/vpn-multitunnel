@@ -38,10 +38,10 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const loadSettings = async () => {
     try {
       const [loaded_settings, loaded_app_path, loaded_dns_status, loaded_profiles] = await Promise.all([
-        window.go.main.App.GetSettings(),
-        window.go.main.App.GetAppPath(),
-        window.go.main.App.GetSystemStatus(),
-        window.go.main.App.GetProfiles(),
+        window.go.app.App.GetSettings(),
+        window.go.app.App.GetAppPath(),
+        window.go.app.App.GetSystemStatus(),
+        window.go.app.App.GetProfiles(),
       ])
       const typed_settings = loaded_settings as Settings
       setSettings(typed_settings)
@@ -64,13 +64,13 @@ function SettingsModal({ onClose }: SettingsModalProps) {
     setError('')
     setSaveResult(null)
     try {
-      const update_result = await window.go.main.App.UpdateSettings(settings)
+      const update_result = await window.go.app.App.UpdateSettings(settings)
       setSaveResult(update_result)
       if (update_result.warning) {
         setError(update_result.warning)
       }
       // Refresh DNS status after save
-      const refreshed_status = await window.go.main.App.GetSystemStatus()
+      const refreshed_status = await window.go.app.App.GetSystemStatus()
       setDnsStatus(refreshed_status)
       setOriginalDnsListenAddress(settings.dnsListenAddress)
       setOriginalFallbackServer(settings.dnsFallbackServer)
@@ -91,7 +91,7 @@ function SettingsModal({ onClose }: SettingsModalProps) {
     setDnsTestDetails(null)
     try {
       const dns_test_address = settings.dnsListenAddress || '127.0.0.53'
-      const test_result = await (window.go.main.App.TestDNSConnectivity as unknown as (address: string) => Promise<DNSTestDetails>)(dns_test_address)
+      const test_result = await (window.go.app.App.TestDNSConnectivity as unknown as (address: string) => Promise<DNSTestDetails>)(dns_test_address)
       setDnsTestDetails(test_result)
     } catch (test_error) {
       setDnsTestDetails({
@@ -109,16 +109,16 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const handleDNSActivate = async () => {
     setDnsActionLoading(true)
     try {
-      await window.go.main.App.ConfigureDNS()
-      setDnsStatus(await window.go.main.App.GetSystemStatus())
+      await window.go.app.App.ConfigureDNS()
+      setDnsStatus(await window.go.app.App.GetSystemStatus())
     } catch {} finally { setDnsActionLoading(false) }
   }
 
   const handleDNSRestore = async () => {
     setDnsActionLoading(true)
     try {
-      await window.go.main.App.RestoreDNS()
-      setDnsStatus(await window.go.main.App.GetSystemStatus())
+      await window.go.app.App.RestoreDNS()
+      setDnsStatus(await window.go.app.App.GetSystemStatus())
     } catch {} finally { setDnsActionLoading(false) }
   }
 

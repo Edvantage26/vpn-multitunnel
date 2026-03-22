@@ -22,7 +22,7 @@ function ConfigFileEditor({ profileId, profileName, configFile, onClose }: Confi
     setLoading(true)
     setError('')
     try {
-      const data = await window.go.main.App.GetConfigFileContent(profileId)
+      const data = await window.go.app.App.GetConfigFileContent(profileId)
       setContent(data)
     } catch (err) {
       setError(String(err))
@@ -36,7 +36,7 @@ function ConfigFileEditor({ profileId, profileName, configFile, onClose }: Confi
     setError('')
     setSaved(false)
     try {
-      await window.go.main.App.SaveConfigFileContent(profileId, content)
+      await window.go.app.App.SaveConfigFileContent(profileId, content)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (err) {

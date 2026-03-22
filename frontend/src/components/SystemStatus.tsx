@@ -17,7 +17,7 @@ function SystemStatus() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const data = await window.go.main.App.GetSystemStatus()
+        const data = await window.go.app.App.GetSystemStatus()
         setStatus(data as SystemStatusData)
       } catch (err) {
         console.error('Failed to fetch system status:', err)

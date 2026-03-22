@@ -72,7 +72,7 @@ function TunnelDetailPanel({
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const config = await window.go.main.App.GetWireGuardConfig(profile.id)
+        const config = await window.go.app.App.GetWireGuardConfig(profile.id)
         setWgConfig(config)
       } catch (err) {
         console.error('Failed to fetch WireGuard config:', err)
@@ -99,7 +99,7 @@ function TunnelDetailPanel({
   useEffect(() => {
     const fetchDetectedHosts = async () => {
       try {
-        const connections = await window.go.main.App.GetActiveConnections()
+        const connections = await window.go.app.App.GetActiveConnections()
         // Filter connections for this profile
         const profileHosts = (connections || []).filter(c => c.profileId === profile.id)
         setDetectedHosts(profileHosts)

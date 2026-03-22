@@ -9,6 +9,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 
+	"vpnmultitunnel/internal/app"
 	"vpnmultitunnel/internal/config"
 )
 
@@ -24,7 +25,7 @@ func main() {
 	}
 
 	// Create an instance of the app structure
-	app := NewApp()
+	application := app.New()
 
 	// Create application with options
 	err = wails.Run(&options.App{
@@ -37,8 +38,8 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour:  &options.RGBA{R: 24, G: 24, B: 27, A: 1},
-		OnStartup:         app.startup,
-		OnShutdown:        app.shutdown,
+		OnStartup:         application.Startup,
+		OnShutdown:        application.Shutdown,
 		Frameless:         false,
 		StartHidden:       cfg.Settings.StartMinimized,
 		HideWindowOnClose: cfg.Settings.MinimizeToTray,
@@ -52,7 +53,7 @@ func main() {
 			Theme:                             windows.Dark,
 		},
 		Bind: []interface{}{
-			app,
+			application,
 		},
 	})
 
