@@ -20,6 +20,7 @@ Configure in Claude Code settings:
 """
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -33,6 +34,11 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from vpn_client import VPNDebugClient
+
+# Ensure Go binaries (wails, go) are in PATH for subprocess calls
+_go_bin_path = Path.home() / "go" / "bin"
+if str(_go_bin_path) not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = str(_go_bin_path) + os.pathsep + os.environ.get("PATH", "")
 
 
 # Path to the VPN executable - prefer production (has service connection), fallback to dev
@@ -691,7 +697,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             # Build if requested
             if should_build:
-                project_root = Path(__file__).parent.parent
+                project_root = Path(__file__).parent.parent.parent
 
                 # Step 0a: Build the main app with wails
                 lines.append("## Step 0a: Building app (wails build)...")
@@ -972,7 +978,7 @@ exit 0
         # build_installer doesn't require the API
         if name == "build_installer":
             lines = ["# Building Installer", ""]
-            project_root = Path(__file__).parent.parent
+            project_root = Path(__file__).parent.parent.parent
             nsis_path = Path("C:/Program Files (x86)/NSIS/makensis.exe")
 
             # Step 1: Build app with wails
@@ -1074,7 +1080,7 @@ exit 0
             should_build = arguments.get("build", True)
 
             lines = ["# Creating GitHub Release", ""]
-            project_root = Path(__file__).parent.parent
+            project_root = Path(__file__).parent.parent.parent
             installer_path = project_root / "build" / "bin" / "VPNMultiTunnel-amd64-installer.exe"
             github_repo = "Edvantage26/vpn-multitunnel"
 
