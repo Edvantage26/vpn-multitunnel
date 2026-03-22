@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import TunnelDetailPanel, { WireGuardConfigDisplay } from './components/TunnelDetailPanel'
-import AddProfileModal from './components/AddProfileModal'
+import ImportWizard from './components/ImportWizard'
 import SettingsModal from './components/SettingsModal'
 import ConfigFileEditor from './components/ConfigFileEditor'
 
@@ -245,17 +245,11 @@ function App() {
     }
   }
 
-  const handleImport = async () => {
-    try {
-      const profile = await window.go.main.App.ImportConfig()
-      showNotification('success', `Imported ${profile.name}`)
-      setShowAddModal(false)
-      await fetchProfiles()
-    } catch (err) {
-      if (String(err) !== 'no file selected') {
-        showNotification('error', `Failed to import: ${err}`)
-      }
-    }
+  const handleImportComplete = async (profile_id: string) => {
+    setShowAddModal(false)
+    await fetchProfiles()
+    setSelectedId(profile_id)
+    showNotification('success', 'Tunnel imported successfully')
   }
 
   const handleSelectProfile = (id: string) => {
@@ -362,9 +356,9 @@ function App() {
 
       {/* Modals */}
       {showAddModal && (
-        <AddProfileModal
+        <ImportWizard
           onClose={() => setShowAddModal(false)}
-          onImport={handleImport}
+          onComplete={handleImportComplete}
         />
       )}
 

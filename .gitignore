@@ -39,3 +39,8 @@ vendor/
 
 # Wails dev
 frontend/wailsjs/
+
+# Wails build artifacts
+build/darwin/
+*.syso
+frontend/package.json.md5
