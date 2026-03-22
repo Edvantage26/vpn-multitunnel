@@ -23,67 +23,67 @@ func NewProfileService(cfg *config.AppConfig) *ProfileService {
 }
 
 // GetAll returns all profiles
-func (s *ProfileService) GetAll() []config.Profile {
-	return s.config.Profiles
+func (profile_service *ProfileService) GetAll() []config.Profile {
+	return profile_service.config.Profiles
 }
 
 // GetByID returns a profile by ID
-func (s *ProfileService) GetByID(id string) (*config.Profile, error) {
-	for i := range s.config.Profiles {
-		if s.config.Profiles[i].ID == id {
-			return &s.config.Profiles[i], nil
+func (profile_service *ProfileService) GetByID(id string) (*config.Profile, error) {
+	for idx_profile := range profile_service.config.Profiles {
+		if profile_service.config.Profiles[idx_profile].ID == id {
+			return &profile_service.config.Profiles[idx_profile], nil
 		}
 	}
 	return nil, fmt.Errorf("profile not found: %s", id)
 }
 
 // Create adds a new profile
-func (s *ProfileService) Create(profile config.Profile) error {
+func (profile_service *ProfileService) Create(profile config.Profile) error {
 	// Check for duplicate ID
-	for _, p := range s.config.Profiles {
-		if p.ID == profile.ID {
+	for _, existing_profile := range profile_service.config.Profiles {
+		if existing_profile.ID == profile.ID {
 			return fmt.Errorf("profile with ID %s already exists", profile.ID)
 		}
 	}
 
 	// Validate port uniqueness
-	if err := s.validatePorts(profile, ""); err != nil {
+	if err := profile_service.validatePorts(profile, ""); err != nil {
 		return err
 	}
 
-	s.config.Profiles = append(s.config.Profiles, profile)
-	return config.Save(s.config)
+	profile_service.config.Profiles = append(profile_service.config.Profiles, profile)
+	return config.Save(profile_service.config)
 }
 
 // Update updates an existing profile
-func (s *ProfileService) Update(profile config.Profile) error {
-	for i, p := range s.config.Profiles {
-		if p.ID == profile.ID {
+func (profile_service *ProfileService) Update(profile config.Profile) error {
+	for idx_profile, profile_entry := range profile_service.config.Profiles {
+		if profile_entry.ID == profile.ID {
 			// Validate port uniqueness (excluding this profile)
-			if err := s.validatePorts(profile, profile.ID); err != nil {
+			if err := profile_service.validatePorts(profile, profile.ID); err != nil {
 				return err
 			}
 
-			s.config.Profiles[i] = profile
-			return config.Save(s.config)
+			profile_service.config.Profiles[idx_profile] = profile
+			return config.Save(profile_service.config)
 		}
 	}
 	return fmt.Errorf("profile not found: %s", profile.ID)
 }
 
 // Delete removes a profile
-func (s *ProfileService) Delete(id string) error {
+func (profile_service *ProfileService) Delete(id string) error {
 	var newProfiles []config.Profile
 	found := false
 
-	for _, p := range s.config.Profiles {
-		if p.ID != id {
-			newProfiles = append(newProfiles, p)
+	for _, existing_profile := range profile_service.config.Profiles {
+		if existing_profile.ID != id {
+			newProfiles = append(newProfiles, existing_profile)
 		} else {
 			found = true
 			// Optionally delete the config file
-			if p.ConfigFile != "" {
-				configPath, err := config.GetConfigFilePath(p.ConfigFile)
+			if existing_profile.ConfigFile != "" {
+				configPath, err := config.GetConfigFilePath(existing_profile.ConfigFile)
 				if err == nil {
 					os.Remove(configPath)
 				}
@@ -95,12 +95,12 @@ func (s *ProfileService) Delete(id string) error {
 		return fmt.Errorf("profile not found: %s", id)
 	}
 
-	s.config.Profiles = newProfiles
-	return config.Save(s.config)
+	profile_service.config.Profiles = newProfiles
+	return config.Save(profile_service.config)
 }
 
 // Import imports a WireGuard configuration file
-func (s *ProfileService) Import(filePath string) (*config.Profile, error) {
+func (profile_service *ProfileService) Import(filePath string) (*config.Profile, error) {
 	// Parse the config
 	wgConfig, err := config.ParseWireGuardConfig(filePath)
 	if err != nil {
@@ -131,16 +131,16 @@ func (s *ProfileService) Import(filePath string) (*config.Profile, error) {
 	profile := config.ProfileFromWireGuardConfig(wgConfig, filePath)
 
 	// Assign tunnel IP for transparent proxy
-	tunnelIP := s.assignTunnelIP(profile.ID)
+	tunnelIP := profile_service.assignTunnelIP(profile.ID)
 	if tunnelIP != "" {
-		if s.config.TCPProxy.TunnelIPs == nil {
-			s.config.TCPProxy.TunnelIPs = make(map[string]string)
+		if profile_service.config.TCPProxy.TunnelIPs == nil {
+			profile_service.config.TCPProxy.TunnelIPs = make(map[string]string)
 		}
-		s.config.TCPProxy.TunnelIPs[profile.ID] = tunnelIP
+		profile_service.config.TCPProxy.TunnelIPs[profile.ID] = tunnelIP
 	}
 
 	// Add to config
-	if err := s.Create(*profile); err != nil {
+	if err := profile_service.Create(*profile); err != nil {
 		// Cleanup copied file on error
 		os.Remove(destPath)
 		return nil, err
@@ -150,20 +150,20 @@ func (s *ProfileService) Import(filePath string) (*config.Profile, error) {
 }
 
 // assignTunnelIP assigns a unique tunnel IP for the transparent proxy
-func (s *ProfileService) assignTunnelIP(profileID string) string {
+func (profile_service *ProfileService) assignTunnelIP(profileID string) string {
 	// Ensure TunnelIPs map exists
-	if s.config.TCPProxy.TunnelIPs == nil {
-		s.config.TCPProxy.TunnelIPs = make(map[string]string)
+	if profile_service.config.TCPProxy.TunnelIPs == nil {
+		profile_service.config.TCPProxy.TunnelIPs = make(map[string]string)
 	}
 
 	// Check if profile already has a tunnel IP
-	if ip, exists := s.config.TCPProxy.TunnelIPs[profileID]; exists {
+	if ip, exists := profile_service.config.TCPProxy.TunnelIPs[profileID]; exists {
 		return ip
 	}
 
 	// Find the next available IP in the 127.0.x.1 range
 	used := make(map[int]bool)
-	for _, ip := range s.config.TCPProxy.TunnelIPs {
+	for _, ip := range profile_service.config.TCPProxy.TunnelIPs {
 		// Extract the third octet from "127.0.X.1"
 		parts := strings.Split(ip, ".")
 		if len(parts) == 4 && parts[0] == "127" && parts[1] == "0" {
@@ -175,9 +175,9 @@ func (s *ProfileService) assignTunnelIP(profileID string) string {
 	}
 
 	// Find next available (start at 1, reserve 0 for system)
-	for i := 1; i < 255; i++ {
-		if !used[i] {
-			return fmt.Sprintf("127.0.%d.1", i)
+	for ip_octet := 1; ip_octet < 255; ip_octet++ {
+		if !used[ip_octet] {
+			return fmt.Sprintf("127.0.%d.1", ip_octet)
 		}
 	}
 
@@ -214,15 +214,15 @@ func (profile_service *ProfileService) Reorder(orderedIDs []string) error {
 }
 
 // GetTunnelIP returns the tunnel IP for a profile
-func (s *ProfileService) GetTunnelIP(profileID string) string {
-	if s.config.TCPProxy.TunnelIPs == nil {
+func (profile_service *ProfileService) GetTunnelIP(profileID string) string {
+	if profile_service.config.TCPProxy.TunnelIPs == nil {
 		return ""
 	}
-	return s.config.TCPProxy.TunnelIPs[profileID]
+	return profile_service.config.TCPProxy.TunnelIPs[profileID]
 }
 
 // validatePorts checks that ports don't conflict with other profiles
-func (s *ProfileService) validatePorts(profile config.Profile, excludeID string) error {
+func (profile_service *ProfileService) validatePorts(profile config.Profile, excludeID string) error {
 	// No per-profile port validation needed after SOCKS5 removal
 	_ = profile
 	_ = excludeID

@@ -104,9 +104,9 @@ func (app *App) findNextTunnelIP() string {
 		}
 	}
 
-	for i := 1; i < 255; i++ {
-		if !used[i] {
-			return fmt.Sprintf("127.0.%d.1", i)
+	for ip_octet := 1; ip_octet < 255; ip_octet++ {
+		if !used[ip_octet] {
+			return fmt.Sprintf("127.0.%d.1", ip_octet)
 		}
 	}
 	return ""
@@ -121,10 +121,10 @@ func (app *App) updateTrayStatus() {
 	profiles := app.profileService.GetAll()
 	statuses := make([]tray.VPNStatus, len(profiles))
 
-	for i, p := range profiles {
-		statuses[i] = tray.VPNStatus{
-			Name:      p.Name,
-			Connected: app.tunnelManager.IsConnected(p.ID),
+	for idx_profile, profile_entry := range profiles {
+		statuses[idx_profile] = tray.VPNStatus{
+			Name:      profile_entry.Name,
+			Connected: app.tunnelManager.IsConnected(profile_entry.ID),
 		}
 	}
 

@@ -37,8 +37,8 @@ function ConnectionTester({ profileId, profileName, isConnected }: ConnectionTes
     }
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !testing) {
+  const handleKeyPress = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && !testing) {
       handleTest()
     }
   }
@@ -72,7 +72,7 @@ function ConnectionTester({ profileId, profileName, isConnected }: ConnectionTes
               <input
                 type="text"
                 value={host}
-                onChange={(e) => setHost(e.target.value)}
+                onChange={(event) => setHost(event.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="e.g., 172.17.0.2 or db.svi"
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:border-primary-500 focus:outline-none"
@@ -84,7 +84,7 @@ function ConnectionTester({ profileId, profileName, isConnected }: ConnectionTes
               <input
                 type="number"
                 value={port}
-                onChange={(e) => setPort(e.target.value)}
+                onChange={(event) => setPort(event.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="5432"
                 className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:border-primary-500 focus:outline-none"

@@ -113,9 +113,9 @@ func ParseWireGuardConfig(filePath string) (*WireGuardConfig, error) {
 	if len(config.Peers) == 0 {
 		return nil, fmt.Errorf("no [Peer] sections found")
 	}
-	for i, peer := range config.Peers {
+	for idx_peer, peer := range config.Peers {
 		if peer.PublicKey == "" {
-			return nil, fmt.Errorf("missing PublicKey in [Peer] %d", i+1)
+			return nil, fmt.Errorf("missing PublicKey in [Peer] %d", idx_peer+1)
 		}
 	}
 

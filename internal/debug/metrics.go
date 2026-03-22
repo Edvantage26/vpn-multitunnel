@@ -82,67 +82,67 @@ func NewMetricsCollector() *MetricsCollector {
 // DNS Metrics
 
 // RecordDNSQuery records a DNS query
-func (m *MetricsCollector) RecordDNSQuery(success bool, throughTunnel bool, cacheHit bool) {
-	atomic.AddInt64(&m.dns.TotalQueries, 1)
+func (metrics_collector *MetricsCollector) RecordDNSQuery(success bool, throughTunnel bool, cacheHit bool) {
+	atomic.AddInt64(&metrics_collector.dns.TotalQueries, 1)
 	if success {
-		atomic.AddInt64(&m.dns.SuccessfulQueries, 1)
+		atomic.AddInt64(&metrics_collector.dns.SuccessfulQueries, 1)
 	} else {
-		atomic.AddInt64(&m.dns.FailedQueries, 1)
+		atomic.AddInt64(&metrics_collector.dns.FailedQueries, 1)
 	}
 	if cacheHit {
-		atomic.AddInt64(&m.dns.CacheHits, 1)
+		atomic.AddInt64(&metrics_collector.dns.CacheHits, 1)
 	}
 	if throughTunnel {
-		atomic.AddInt64(&m.dns.TunnelQueries, 1)
+		atomic.AddInt64(&metrics_collector.dns.TunnelQueries, 1)
 	} else if !cacheHit {
-		atomic.AddInt64(&m.dns.FallbackQueries, 1)
+		atomic.AddInt64(&metrics_collector.dns.FallbackQueries, 1)
 	}
 }
 
 // GetDNSMetrics returns DNS query metrics
-func (m *MetricsCollector) GetDNSMetrics() DNSQueryMetrics {
+func (metrics_collector *MetricsCollector) GetDNSMetrics() DNSQueryMetrics {
 	return DNSQueryMetrics{
-		TotalQueries:      atomic.LoadInt64(&m.dns.TotalQueries),
-		SuccessfulQueries: atomic.LoadInt64(&m.dns.SuccessfulQueries),
-		FailedQueries:     atomic.LoadInt64(&m.dns.FailedQueries),
-		CacheHits:         atomic.LoadInt64(&m.dns.CacheHits),
-		TunnelQueries:     atomic.LoadInt64(&m.dns.TunnelQueries),
-		FallbackQueries:   atomic.LoadInt64(&m.dns.FallbackQueries),
+		TotalQueries:      atomic.LoadInt64(&metrics_collector.dns.TotalQueries),
+		SuccessfulQueries: atomic.LoadInt64(&metrics_collector.dns.SuccessfulQueries),
+		FailedQueries:     atomic.LoadInt64(&metrics_collector.dns.FailedQueries),
+		CacheHits:         atomic.LoadInt64(&metrics_collector.dns.CacheHits),
+		TunnelQueries:     atomic.LoadInt64(&metrics_collector.dns.TunnelQueries),
+		FallbackQueries:   atomic.LoadInt64(&metrics_collector.dns.FallbackQueries),
 	}
 }
 
 // TCP Proxy Metrics
 
 // RecordTCPProxyConnection records a TCP proxy connection event
-func (m *MetricsCollector) RecordTCPProxyConnection(success bool) {
-	atomic.AddInt64(&m.tcpProxy.TotalConnections, 1)
+func (metrics_collector *MetricsCollector) RecordTCPProxyConnection(success bool) {
+	atomic.AddInt64(&metrics_collector.tcpProxy.TotalConnections, 1)
 	if success {
-		atomic.AddInt64(&m.tcpProxy.ActiveConnections, 1)
+		atomic.AddInt64(&metrics_collector.tcpProxy.ActiveConnections, 1)
 	} else {
-		atomic.AddInt64(&m.tcpProxy.FailedConnections, 1)
+		atomic.AddInt64(&metrics_collector.tcpProxy.FailedConnections, 1)
 	}
 }
 
 // RecordTCPProxyDisconnect records a TCP proxy disconnection
-func (m *MetricsCollector) RecordTCPProxyDisconnect(bytesTransferred int64) {
-	atomic.AddInt64(&m.tcpProxy.ActiveConnections, -1)
-	atomic.AddInt64(&m.tcpProxy.BytesTransferred, bytesTransferred)
+func (metrics_collector *MetricsCollector) RecordTCPProxyDisconnect(bytesTransferred int64) {
+	atomic.AddInt64(&metrics_collector.tcpProxy.ActiveConnections, -1)
+	atomic.AddInt64(&metrics_collector.tcpProxy.BytesTransferred, bytesTransferred)
 }
 
 // GetTCPProxyMetrics returns TCP proxy metrics
-func (m *MetricsCollector) GetTCPProxyMetrics() ProxyMetrics {
+func (metrics_collector *MetricsCollector) GetTCPProxyMetrics() ProxyMetrics {
 	return ProxyMetrics{
-		TotalConnections:  atomic.LoadInt64(&m.tcpProxy.TotalConnections),
-		ActiveConnections: atomic.LoadInt64(&m.tcpProxy.ActiveConnections),
-		FailedConnections: atomic.LoadInt64(&m.tcpProxy.FailedConnections),
-		BytesTransferred:  atomic.LoadInt64(&m.tcpProxy.BytesTransferred),
+		TotalConnections:  atomic.LoadInt64(&metrics_collector.tcpProxy.TotalConnections),
+		ActiveConnections: atomic.LoadInt64(&metrics_collector.tcpProxy.ActiveConnections),
+		FailedConnections: atomic.LoadInt64(&metrics_collector.tcpProxy.FailedConnections),
+		BytesTransferred:  atomic.LoadInt64(&metrics_collector.tcpProxy.BytesTransferred),
 	}
 }
 
 // Latency Metrics
 
 // RecordLatency records a latency measurement
-func (m *MetricsCollector) RecordLatency(profileID, target string, latency time.Duration, success bool) {
+func (metrics_collector *MetricsCollector) RecordLatency(profileID, target string, latency time.Duration, success bool) {
 	sample := LatencySample{
 		Timestamp: time.Now(),
 		ProfileID: profileID,
@@ -150,20 +150,20 @@ func (m *MetricsCollector) RecordLatency(profileID, target string, latency time.
 		Latency:   latency,
 		Success:   success,
 	}
-	m.latencyBuffer.Add(sample)
+	metrics_collector.latencyBuffer.Add(sample)
 
 	// Update tunnel metrics
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	metrics_collector.mu.Lock()
+	defer metrics_collector.mu.Unlock()
 
-	if _, exists := m.tunnels[profileID]; !exists {
-		m.tunnels[profileID] = &TunnelMetrics{
+	if _, exists := metrics_collector.tunnels[profileID]; !exists {
+		metrics_collector.tunnels[profileID] = &TunnelMetrics{
 			ProfileID:      profileID,
 			LatencyHistory: make([]LatencySample, 0, 100),
 		}
 	}
 
-	tm := m.tunnels[profileID]
+	tm := metrics_collector.tunnels[profileID]
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
@@ -188,33 +188,33 @@ func (m *MetricsCollector) RecordLatency(profileID, target string, latency time.
 }
 
 // GetLatencyHistory returns recent latency samples
-func (m *MetricsCollector) GetLatencyHistory(limit int) []LatencySample {
-	return m.latencyBuffer.GetLast(limit)
+func (metrics_collector *MetricsCollector) GetLatencyHistory(limit int) []LatencySample {
+	return metrics_collector.latencyBuffer.GetLast(limit)
 }
 
 // GetLatencyHistoryForProfile returns latency samples for a specific profile
-func (m *MetricsCollector) GetLatencyHistoryForProfile(profileID string, limit int) []LatencySample {
+func (metrics_collector *MetricsCollector) GetLatencyHistoryForProfile(profileID string, limit int) []LatencySample {
 	filter := func(sample LatencySample) bool {
 		return sample.ProfileID == profileID
 	}
-	return m.latencyBuffer.GetFiltered(filter, limit)
+	return metrics_collector.latencyBuffer.GetFiltered(filter, limit)
 }
 
 // Tunnel Metrics
 
 // UpdateTunnelStats updates tunnel statistics
-func (m *MetricsCollector) UpdateTunnelStats(profileID string, bytesSent, bytesRecv int64, lastHandshake time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (metrics_collector *MetricsCollector) UpdateTunnelStats(profileID string, bytesSent, bytesRecv int64, lastHandshake time.Time) {
+	metrics_collector.mu.Lock()
+	defer metrics_collector.mu.Unlock()
 
-	if _, exists := m.tunnels[profileID]; !exists {
-		m.tunnels[profileID] = &TunnelMetrics{
+	if _, exists := metrics_collector.tunnels[profileID]; !exists {
+		metrics_collector.tunnels[profileID] = &TunnelMetrics{
 			ProfileID:      profileID,
 			LatencyHistory: make([]LatencySample, 0, 100),
 		}
 	}
 
-	tm := m.tunnels[profileID]
+	tm := metrics_collector.tunnels[profileID]
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
@@ -224,11 +224,11 @@ func (m *MetricsCollector) UpdateTunnelStats(profileID string, bytesSent, bytesR
 }
 
 // GetTunnelMetrics returns metrics for a specific tunnel
-func (m *MetricsCollector) GetTunnelMetrics(profileID string) *TunnelMetrics {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (metrics_collector *MetricsCollector) GetTunnelMetrics(profileID string) *TunnelMetrics {
+	metrics_collector.mu.RLock()
+	defer metrics_collector.mu.RUnlock()
 
-	if tm, exists := m.tunnels[profileID]; exists {
+	if tm, exists := metrics_collector.tunnels[profileID]; exists {
 		tm.mu.RLock()
 		defer tm.mu.RUnlock()
 		return &TunnelMetrics{
@@ -245,12 +245,12 @@ func (m *MetricsCollector) GetTunnelMetrics(profileID string) *TunnelMetrics {
 }
 
 // GetAllMetrics returns all metrics as a map
-func (m *MetricsCollector) GetAllMetrics() map[string]any {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (metrics_collector *MetricsCollector) GetAllMetrics() map[string]any {
+	metrics_collector.mu.RLock()
+	defer metrics_collector.mu.RUnlock()
 
 	tunnelMetrics := make(map[string]*TunnelMetrics)
-	for id, tm := range m.tunnels {
+	for id, tm := range metrics_collector.tunnels {
 		tm.mu.RLock()
 		tunnelMetrics[id] = &TunnelMetrics{
 			ProfileID:     tm.ProfileID,
@@ -264,17 +264,17 @@ func (m *MetricsCollector) GetAllMetrics() map[string]any {
 	}
 
 	return map[string]any{
-		"uptime":     time.Since(m.startTime).String(),
-		"uptimeMs":   time.Since(m.startTime).Milliseconds(),
-		"dns":        m.GetDNSMetrics(),
-		"tcpProxy":   m.GetTCPProxyMetrics(),
+		"uptime":     time.Since(metrics_collector.startTime).String(),
+		"uptimeMs":   time.Since(metrics_collector.startTime).Milliseconds(),
+		"dns":        metrics_collector.GetDNSMetrics(),
+		"tcpProxy":   metrics_collector.GetTCPProxyMetrics(),
 		"tunnels":    tunnelMetrics,
 	}
 }
 
 // GetMetricsJSON returns all metrics as JSON
-func (m *MetricsCollector) GetMetricsJSON() (string, error) {
-	metrics := m.GetAllMetrics()
+func (metrics_collector *MetricsCollector) GetMetricsJSON() (string, error) {
+	metrics := metrics_collector.GetAllMetrics()
 	data, err := json.Marshal(metrics)
 	if err != nil {
 		return "", err
@@ -283,15 +283,15 @@ func (m *MetricsCollector) GetMetricsJSON() (string, error) {
 }
 
 // Reset resets all metrics
-func (m *MetricsCollector) Reset() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (metrics_collector *MetricsCollector) Reset() {
+	metrics_collector.mu.Lock()
+	defer metrics_collector.mu.Unlock()
 
-	m.dns = DNSQueryMetrics{}
-	m.tcpProxy = ProxyMetrics{}
-	m.tunnels = make(map[string]*TunnelMetrics)
-	m.latencyBuffer.Clear()
-	m.startTime = time.Now()
+	metrics_collector.dns = DNSQueryMetrics{}
+	metrics_collector.tcpProxy = ProxyMetrics{}
+	metrics_collector.tunnels = make(map[string]*TunnelMetrics)
+	metrics_collector.latencyBuffer.Clear()
+	metrics_collector.startTime = time.Now()
 }
 
 // Convenience functions

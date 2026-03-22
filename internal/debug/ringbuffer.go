@@ -25,88 +25,88 @@ func NewRingBuffer[T any](capacity int) *RingBuffer[T] {
 }
 
 // Add adds an item to the ring buffer
-func (r *RingBuffer[T]) Add(item T) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (ring_buffer *RingBuffer[T]) Add(item T) {
+	ring_buffer.mu.Lock()
+	defer ring_buffer.mu.Unlock()
 
-	r.items[r.head] = item
-	r.head = (r.head + 1) % r.capacity
-	if r.count < r.capacity {
-		r.count++
+	ring_buffer.items[ring_buffer.head] = item
+	ring_buffer.head = (ring_buffer.head + 1) % ring_buffer.capacity
+	if ring_buffer.count < ring_buffer.capacity {
+		ring_buffer.count++
 	}
 }
 
 // GetAll returns all items in the buffer (oldest first)
-func (r *RingBuffer[T]) GetAll() []T {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (ring_buffer *RingBuffer[T]) GetAll() []T {
+	ring_buffer.mu.RLock()
+	defer ring_buffer.mu.RUnlock()
 
-	result := make([]T, r.count)
-	if r.count == 0 {
+	result := make([]T, ring_buffer.count)
+	if ring_buffer.count == 0 {
 		return result
 	}
 
 	// Calculate start position
 	start := 0
-	if r.count == r.capacity {
-		start = r.head // Buffer is full, head points to oldest item
+	if ring_buffer.count == ring_buffer.capacity {
+		start = ring_buffer.head // Buffer is full, head points to oldest item
 	}
 
-	for i := 0; i < r.count; i++ {
-		idx := (start + i) % r.capacity
-		result[i] = r.items[idx]
+	for idx_item := 0; idx_item < ring_buffer.count; idx_item++ {
+		idx := (start + idx_item) % ring_buffer.capacity
+		result[idx_item] = ring_buffer.items[idx]
 	}
 
 	return result
 }
 
 // GetLast returns the last n items (newest first)
-func (r *RingBuffer[T]) GetLast(n int) []T {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (ring_buffer *RingBuffer[T]) GetLast(item_count int) []T {
+	ring_buffer.mu.RLock()
+	defer ring_buffer.mu.RUnlock()
 
-	if n > r.count {
-		n = r.count
+	if item_count > ring_buffer.count {
+		item_count = ring_buffer.count
 	}
-	if n <= 0 {
+	if item_count <= 0 {
 		return []T{}
 	}
 
-	result := make([]T, n)
+	result := make([]T, item_count)
 
-	for i := 0; i < n; i++ {
+	for idx_item := 0; idx_item < item_count; idx_item++ {
 		// Work backwards from head-1 (most recent)
-		idx := (r.head - 1 - i + r.capacity) % r.capacity
-		result[i] = r.items[idx]
+		idx := (ring_buffer.head - 1 - idx_item + ring_buffer.capacity) % ring_buffer.capacity
+		result[idx_item] = ring_buffer.items[idx]
 	}
 
 	return result
 }
 
 // GetFiltered returns items that match the filter function (oldest first)
-func (r *RingBuffer[T]) GetFiltered(filter func(T) bool, limit int) []T {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (ring_buffer *RingBuffer[T]) GetFiltered(filter func(T) bool, limit int) []T {
+	ring_buffer.mu.RLock()
+	defer ring_buffer.mu.RUnlock()
 
 	if limit <= 0 {
-		limit = r.count
+		limit = ring_buffer.count
 	}
 
 	result := make([]T, 0, limit)
-	if r.count == 0 {
+	if ring_buffer.count == 0 {
 		return result
 	}
 
 	// Calculate start position
 	start := 0
-	if r.count == r.capacity {
-		start = r.head
+	if ring_buffer.count == ring_buffer.capacity {
+		start = ring_buffer.head
 	}
 
-	for i := 0; i < r.count && len(result) < limit; i++ {
-		idx := (start + i) % r.capacity
-		if filter(r.items[idx]) {
-			result = append(result, r.items[idx])
+	for idx_item := 0; idx_item < ring_buffer.count && len(result) < limit; idx_item++ {
+		idx := (start + idx_item) % ring_buffer.capacity
+		if filter(ring_buffer.items[idx]) {
+			result = append(result, ring_buffer.items[idx])
 		}
 	}
 
@@ -114,26 +114,26 @@ func (r *RingBuffer[T]) GetFiltered(filter func(T) bool, limit int) []T {
 }
 
 // Count returns the number of items in the buffer
-func (r *RingBuffer[T]) Count() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.count
+func (ring_buffer *RingBuffer[T]) Count() int {
+	ring_buffer.mu.RLock()
+	defer ring_buffer.mu.RUnlock()
+	return ring_buffer.count
 }
 
 // Clear removes all items from the buffer
-func (r *RingBuffer[T]) Clear() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.head = 0
-	r.count = 0
+func (ring_buffer *RingBuffer[T]) Clear() {
+	ring_buffer.mu.Lock()
+	defer ring_buffer.mu.Unlock()
+	ring_buffer.head = 0
+	ring_buffer.count = 0
 	// Zero out the slice to allow GC
-	for i := range r.items {
+	for idx_item := range ring_buffer.items {
 		var zero T
-		r.items[i] = zero
+		ring_buffer.items[idx_item] = zero
 	}
 }
 
 // Capacity returns the maximum capacity of the buffer
-func (r *RingBuffer[T]) Capacity() int {
-	return r.capacity
+func (ring_buffer *RingBuffer[T]) Capacity() int {
+	return ring_buffer.capacity
 }

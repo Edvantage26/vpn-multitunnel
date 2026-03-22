@@ -88,11 +88,11 @@ func Load() (*AppConfig, error) {
 		}
 		trueVal := true
 		falseVal := false
-		for i := range cfg.Profiles {
-			if _, shouldAuto := autoConnectSet[cfg.Profiles[i].ID]; shouldAuto {
-				cfg.Profiles[i].AutoConnect = &trueVal
+		for idx_profile := range cfg.Profiles {
+			if _, shouldAuto := autoConnectSet[cfg.Profiles[idx_profile].ID]; shouldAuto {
+				cfg.Profiles[idx_profile].AutoConnect = &trueVal
 			} else {
-				cfg.Profiles[i].AutoConnect = &falseVal
+				cfg.Profiles[idx_profile].AutoConnect = &falseVal
 			}
 		}
 		// Clear the old list

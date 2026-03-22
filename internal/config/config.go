@@ -82,11 +82,11 @@ type DNSProxy struct {
 }
 
 // GetListenAddress returns the listen address, defaulting to 127.0.0.53 to avoid conflicts with Windows DNS Client
-func (d *DNSProxy) GetListenAddress() string {
-	if d.ListenAddress == "" {
+func (dns_proxy *DNSProxy) GetListenAddress() string {
+	if dns_proxy.ListenAddress == "" {
 		return "127.0.0.53"
 	}
-	return d.ListenAddress
+	return dns_proxy.ListenAddress
 }
 
 // DNSRule maps domain suffixes to profiles
@@ -99,11 +99,11 @@ type DNSRule struct {
 }
 
 // ShouldStripSuffix returns whether to strip the suffix (default true)
-func (r *DNSRule) ShouldStripSuffix() bool {
-	if r.StripSuffix == nil {
+func (dns_rule *DNSRule) ShouldStripSuffix() bool {
+	if dns_rule.StripSuffix == nil {
 		return true // Default: strip suffix
 	}
-	return *r.StripSuffix
+	return *dns_rule.StripSuffix
 }
 
 // TCPProxy configures the transparent TCP proxy

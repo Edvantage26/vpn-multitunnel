@@ -44,13 +44,13 @@ func NewDNSProxy(cfg *config.DNSProxy, dialerGetter func(profileID string) Tunne
 }
 
 // SetTransparentProxyConfig sets the transparent proxy configuration
-func (p *DNSProxy) SetTransparentProxyConfig(tunnelIPs map[string]string, hostMapping *HostMappingCache, enabled bool, onNewIP func(ip string, profileID string) error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.tunnelIPs = tunnelIPs
-	p.hostMapping = hostMapping
-	p.tcpProxyEnabled = enabled
-	p.onNewIP = onNewIP
+func (dns_proxy *DNSProxy) SetTransparentProxyConfig(tunnelIPs map[string]string, hostMapping *HostMappingCache, enabled bool, onNewIP func(ip string, profileID string) error) {
+	dns_proxy.mu.Lock()
+	defer dns_proxy.mu.Unlock()
+	dns_proxy.tunnelIPs = tunnelIPs
+	dns_proxy.hostMapping = hostMapping
+	dns_proxy.tcpProxyEnabled = enabled
+	dns_proxy.onNewIP = onNewIP
 }
 
 // listenPacketWithReuseAddr creates a UDP PacketConn with SO_REUSEADDR set.
@@ -58,9 +58,9 @@ func (p *DNSProxy) SetTransparentProxyConfig(tunnelIPs map[string]string, hostMa
 // another process (SharedAccess/ICS) holds a wildcard binding on 0.0.0.0:53.
 func listenPacketWithReuseAddr(network, address string) (net.PacketConn, error) {
 	lc := net.ListenConfig{
-		Control: func(network, address string, c syscall.RawConn) error {
+		Control: func(network, address string, rawConn syscall.RawConn) error {
 			var opErr error
-			err := c.Control(func(fd uintptr) {
+			err := rawConn.Control(func(fd uintptr) {
 				opErr = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_REUSEADDR, 1)
 			})
 			if err != nil {
@@ -73,12 +73,12 @@ func listenPacketWithReuseAddr(network, address string) (net.PacketConn, error) 
 }
 
 // Start starts the DNS proxy on both IPv4 and IPv6
-func (p *DNSProxy) Start() error {
-	handler := dns.HandlerFunc(p.handleDNS)
+func (dns_proxy *DNSProxy) Start() error {
+	handler := dns.HandlerFunc(dns_proxy.handleDNS)
 
 	// Start IPv4 server on configured loopback address (default: 127.0.0.53)
-	listenAddr := p.config.GetListenAddress()
-	addrV4 := fmt.Sprintf("%s:%d", listenAddr, p.config.ListenPort)
+	listenAddr := dns_proxy.config.GetListenAddress()
+	addrV4 := fmt.Sprintf("%s:%d", listenAddr, dns_proxy.config.ListenPort)
 
 	// Pre-bind with SO_REUSEADDR to coexist with SharedAccess/ICS on 0.0.0.0:53.
 	// The specific-address binding (127.0.0.53) takes priority over the wildcard (0.0.0.0)
@@ -87,9 +87,9 @@ func (p *DNSProxy) Start() error {
 	if err != nil {
 		return fmt.Errorf("cannot bind DNS proxy to %s: %w (is the loopback IP configured?)", addrV4, err)
 	}
-	p.connV4 = connV4
+	dns_proxy.connV4 = connV4
 
-	p.server = &dns.Server{
+	dns_proxy.server = &dns.Server{
 		PacketConn: connV4,
 		Handler:    handler,
 	}
@@ -97,7 +97,7 @@ func (p *DNSProxy) Start() error {
 	// Channel to capture startup errors
 	errChan := make(chan error, 1)
 	go func() {
-		if err := p.server.ActivateAndServe(); err != nil {
+		if err := dns_proxy.server.ActivateAndServe(); err != nil {
 			log.Printf("DNS proxy IPv4 error: %v", err)
 			select {
 			case errChan <- err:
@@ -110,27 +110,27 @@ func (p *DNSProxy) Start() error {
 	time.Sleep(100 * time.Millisecond)
 	select {
 	case err := <-errChan:
-		p.connV4.Close()
-		p.connV4 = nil
+		dns_proxy.connV4.Close()
+		dns_proxy.connV4 = nil
 		return fmt.Errorf("DNS proxy IPv4 failed to start on %s: %w", addrV4, err)
 	default:
 		// No error, continue
 	}
 
 	// Start IPv6 server on [::1]
-	addrV6 := fmt.Sprintf("[::1]:%d", p.config.ListenPort)
+	addrV6 := fmt.Sprintf("[::1]:%d", dns_proxy.config.ListenPort)
 	connV6, err := listenPacketWithReuseAddr("udp6", addrV6)
 	if err != nil {
 		log.Printf("DNS proxy IPv6 bind warning: %v (IPv6 will be unavailable)", err)
 	} else {
-		p.connV6 = connV6
-		p.serverV6 = &dns.Server{
+		dns_proxy.connV6 = connV6
+		dns_proxy.serverV6 = &dns.Server{
 			PacketConn: connV6,
 			Handler:    handler,
 		}
 
 		go func() {
-			if err := p.serverV6.ActivateAndServe(); err != nil {
+			if err := dns_proxy.serverV6.ActivateAndServe(); err != nil {
 				log.Printf("DNS proxy IPv6 error: %v", err)
 			}
 		}()
@@ -141,64 +141,64 @@ func (p *DNSProxy) Start() error {
 }
 
 // Stop stops the DNS proxy (both IPv4 and IPv6)
-func (p *DNSProxy) Stop() {
-	if p.server != nil {
-		p.server.Shutdown()
-		p.server = nil
+func (dns_proxy *DNSProxy) Stop() {
+	if dns_proxy.server != nil {
+		dns_proxy.server.Shutdown()
+		dns_proxy.server = nil
 	}
-	if p.connV4 != nil {
-		p.connV4.Close()
-		p.connV4 = nil
+	if dns_proxy.connV4 != nil {
+		dns_proxy.connV4.Close()
+		dns_proxy.connV4 = nil
 	}
-	if p.serverV6 != nil {
-		p.serverV6.Shutdown()
-		p.serverV6 = nil
+	if dns_proxy.serverV6 != nil {
+		dns_proxy.serverV6.Shutdown()
+		dns_proxy.serverV6 = nil
 	}
-	if p.connV6 != nil {
-		p.connV6.Close()
-		p.connV6 = nil
+	if dns_proxy.connV6 != nil {
+		dns_proxy.connV6.Close()
+		dns_proxy.connV6 = nil
 	}
 }
 
 // Restart restarts the DNS proxy on a new port
-func (p *DNSProxy) Restart(newPort int) error {
-	p.Stop()
-	p.config.ListenPort = newPort
-	return p.Start()
+func (dns_proxy *DNSProxy) Restart(newPort int) error {
+	dns_proxy.Stop()
+	dns_proxy.config.ListenPort = newPort
+	return dns_proxy.Start()
 }
 
 // GetPort returns the current listening port
-func (p *DNSProxy) GetPort() int {
-	return p.config.ListenPort
+func (dns_proxy *DNSProxy) GetPort() int {
+	return dns_proxy.config.ListenPort
 }
 
 // GetListenAddress returns the listen address (e.g., "127.0.0.53")
-func (p *DNSProxy) GetListenAddress() string {
-	return p.config.GetListenAddress()
+func (dns_proxy *DNSProxy) GetListenAddress() string {
+	return dns_proxy.config.GetListenAddress()
 }
 
-func (p *DNSProxy) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
-	if len(r.Question) == 0 {
+func (dns_proxy *DNSProxy) handleDNS(response_writer dns.ResponseWriter, request *dns.Msg) {
+	if len(request.Question) == 0 {
 		return
 	}
 
-	question := r.Question[0]
+	question := request.Question[0]
 	domain := strings.ToLower(strings.TrimSuffix(question.Name, "."))
 
 	// Find matching rule
-	rule := p.findRule(domain)
+	rule := dns_proxy.findRule(domain)
 
 	var response *dns.Msg
 	var err error
 
 	if rule != nil {
 		// Check if transparent proxy is enabled for this profile
-		p.mu.RLock()
-		_, hasTunnelIP := p.tunnelIPs[rule.ProfileID]
-		tcpProxyEnabled := p.tcpProxyEnabled
-		hostMapping := p.hostMapping
-		onNewIP := p.onNewIP
-		p.mu.RUnlock()
+		dns_proxy.mu.RLock()
+		_, hasTunnelIP := dns_proxy.tunnelIPs[rule.ProfileID]
+		tcpProxyEnabled := dns_proxy.tcpProxyEnabled
+		hostMapping := dns_proxy.hostMapping
+		onNewIP := dns_proxy.onNewIP
+		dns_proxy.mu.RUnlock()
 
 		// Strip suffix if configured (default: true)
 		queryDomain := domain
@@ -229,22 +229,22 @@ func (p *DNSProxy) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 							log.Printf("DNS: failed to configure new IP %s: %v", tunnelIP, err)
 						}
 					}
-					response = createAResponse(r, tunnelIP, question.Qtype)
+					response = createAResponse(request, tunnelIP, question.Qtype)
 				} else {
 					// Return static IP directly
-					response = createAResponse(r, staticIP, question.Qtype)
+					response = createAResponse(request, staticIP, question.Qtype)
 				}
-				w.WriteMsg(response)
+				response_writer.WriteMsg(response)
 				return
 			}
 		}
 
 		// Create modified query with stripped domain
-		modifiedRequest := r.Copy()
+		modifiedRequest := request.Copy()
 		modifiedRequest.Question[0].Name = dns.Fqdn(queryDomain)
 
 		// Query through tunnel to get the real IP
-		response, err = p.queryThroughTunnel(modifiedRequest, rule.ProfileID, rule.DNSServer)
+		response, err = dns_proxy.queryThroughTunnel(modifiedRequest, rule.ProfileID, rule.DNSServer)
 
 		// If transparent proxy is enabled and we have a tunnel IP, replace the response
 		if err == nil && tcpProxyEnabled && hasTunnelIP && hostMapping != nil {
@@ -272,7 +272,7 @@ func (p *DNSProxy) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 				}
 
 				// Create new response with tunnel IP (use original question name)
-				response = createAResponse(r, tunnelIP, question.Qtype)
+				response = createAResponse(request, tunnelIP, question.Qtype)
 			}
 		} else if err == nil {
 			// Fix response to use original domain name (with suffix)
@@ -283,27 +283,27 @@ func (p *DNSProxy) handleDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	} else {
 		// Use system DNS or fallback
-		response, err = p.queryFallback(r)
+		response, err = dns_proxy.queryFallback(request)
 	}
 
 	if err != nil {
 		log.Printf("DNS query error for %s: %v", domain, err)
 		// Return SERVFAIL
-		m := new(dns.Msg)
-		m.SetRcode(r, dns.RcodeServerFailure)
-		w.WriteMsg(m)
+		servfail_response := new(dns.Msg)
+		servfail_response.SetRcode(request, dns.RcodeServerFailure)
+		response_writer.WriteMsg(servfail_response)
 		return
 	}
 
-	w.WriteMsg(response)
+	response_writer.WriteMsg(response)
 }
 
-func (p *DNSProxy) findRule(domain string) *config.DNSRule {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+func (dns_proxy *DNSProxy) findRule(domain string) *config.DNSRule {
+	dns_proxy.mu.RLock()
+	defer dns_proxy.mu.RUnlock()
 
-	for i := range p.config.Rules {
-		rule := &p.config.Rules[i]
+	for idx_rule := range dns_proxy.config.Rules {
+		rule := &dns_proxy.config.Rules[idx_rule]
 		suffix := strings.ToLower(rule.Suffix)
 		if strings.HasSuffix(domain, suffix) || domain == strings.TrimPrefix(suffix, ".") {
 			return rule
@@ -325,13 +325,13 @@ func stripSuffix(domain, suffix string) string {
 	return domain
 }
 
-func (p *DNSProxy) queryThroughTunnel(r *dns.Msg, profileID, dnsServer string) (*dns.Msg, error) {
+func (dns_proxy *DNSProxy) queryThroughTunnel(request *dns.Msg, profileID, dnsServer string) (*dns.Msg, error) {
 	// Log the actual query being sent
-	if len(r.Question) > 0 {
-		debug.Debug("dns", fmt.Sprintf("queryThroughTunnel: querying %s via %s (profile: %s)", r.Question[0].Name, dnsServer, profileID), nil)
+	if len(request.Question) > 0 {
+		debug.Debug("dns", fmt.Sprintf("queryThroughTunnel: querying %s via %s (profile: %s)", request.Question[0].Name, dnsServer, profileID), nil)
 	}
 
-	dialer := p.dialerGetter(profileID)
+	dialer := dns_proxy.dialerGetter(profileID)
 	if dialer == nil {
 		return nil, fmt.Errorf("tunnel not connected for profile: %s", profileID)
 	}
@@ -356,7 +356,7 @@ func (p *DNSProxy) queryThroughTunnel(r *dns.Msg, profileID, dnsServer string) (
 	dnsConn := &dns.Conn{Conn: conn}
 
 	// Send query
-	if err := dnsConn.WriteMsg(r); err != nil {
+	if err := dnsConn.WriteMsg(request); err != nil {
 		return nil, fmt.Errorf("failed to send DNS query: %w", err)
 	}
 
@@ -375,7 +375,7 @@ func (p *DNSProxy) queryThroughTunnel(r *dns.Msg, profileID, dnsServer string) (
 	return response, nil
 }
 
-func (p *DNSProxy) queryFallback(r *dns.Msg) (*dns.Msg, error) {
+func (dns_proxy *DNSProxy) queryFallback(request *dns.Msg) (*dns.Msg, error) {
 	client := &dns.Client{
 		Net:     "udp",
 		Timeout: 5 * time.Second,
@@ -389,7 +389,7 @@ func (p *DNSProxy) queryFallback(r *dns.Msg) (*dns.Msg, error) {
 
 	var lastErr error
 	for _, server := range dnsServers {
-		response, _, err := client.Exchange(r, server+":53")
+		response, _, err := client.Exchange(request, server+":53")
 		if err == nil {
 			return response, nil
 		}
@@ -407,10 +407,10 @@ func getSystemDNS() []string {
 }
 
 // UpdateRules updates the DNS routing rules
-func (p *DNSProxy) UpdateRules(rules []config.DNSRule) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.config.Rules = rules
+func (dns_proxy *DNSProxy) UpdateRules(rules []config.DNSRule) {
+	dns_proxy.mu.Lock()
+	defer dns_proxy.mu.Unlock()
+	dns_proxy.config.Rules = rules
 }
 
 // extractIPFromResponse extracts the first A record IP from a DNS response
@@ -420,8 +420,8 @@ func extractIPFromResponse(response *dns.Msg) string {
 	}
 
 	for _, answer := range response.Answer {
-		if a, ok := answer.(*dns.A); ok {
-			return a.A.String()
+		if a_record, ok := answer.(*dns.A); ok {
+			return a_record.A.String()
 		}
 	}
 
@@ -454,11 +454,11 @@ func createAResponse(request *dns.Msg, ip string, qtype uint16) *dns.Msg {
 }
 
 // ResolveViaTunnel resolves a hostname via a specific tunnel's DNS server
-func (p *DNSProxy) ResolveViaTunnel(profileID, hostname, dnsServer string) (string, error) {
+func (dns_proxy *DNSProxy) ResolveViaTunnel(profileID, hostname, dnsServer string) (string, error) {
 	// Find the matching rule to check if we should strip suffix
 	queryHostname := hostname
-	debug.Debug("dns", fmt.Sprintf("ResolveViaTunnel: looking for rule for %s (rules count: %d)", hostname, len(p.config.Rules)), nil)
-	rule := p.findRule(strings.ToLower(hostname))
+	debug.Debug("dns", fmt.Sprintf("ResolveViaTunnel: looking for rule for %s (rules count: %d)", hostname, len(dns_proxy.config.Rules)), nil)
+	rule := dns_proxy.findRule(strings.ToLower(hostname))
 	if rule != nil {
 		debug.Debug("dns", fmt.Sprintf("ResolveViaTunnel: found rule %s, stripSuffix=%v", rule.Suffix, rule.ShouldStripSuffix()), nil)
 		if rule.ShouldStripSuffix() {
@@ -470,12 +470,12 @@ func (p *DNSProxy) ResolveViaTunnel(profileID, hostname, dnsServer string) (stri
 	}
 
 	// Create DNS query
-	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(queryHostname), dns.TypeA)
-	m.RecursionDesired = true
+	dns_query := new(dns.Msg)
+	dns_query.SetQuestion(dns.Fqdn(queryHostname), dns.TypeA)
+	dns_query.RecursionDesired = true
 
 	// Query through tunnel
-	response, err := p.queryThroughTunnel(m, profileID, dnsServer)
+	response, err := dns_proxy.queryThroughTunnel(dns_query, profileID, dnsServer)
 	if err != nil {
 		return "", err
 	}

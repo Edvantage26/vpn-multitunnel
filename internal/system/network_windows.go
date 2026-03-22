@@ -46,18 +46,18 @@ func GetNetworkConfig() *NetworkConfig {
 
 // ConnectToService attempts to connect to the VPN MultiTunnel service
 // Returns true if connected successfully
-func (n *NetworkConfig) ConnectToService() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (network_config *NetworkConfig) ConnectToService() bool {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
 
-	if n.serviceClient != nil && n.useService {
+	if network_config.serviceClient != nil && network_config.useService {
 		return true // Already connected
 	}
 
 	client := ipc.NewClient()
 	if err := client.Connect(); err != nil {
 		log.Printf("Service not available: %v", err)
-		n.useService = false
+		network_config.useService = false
 		return false
 	}
 
@@ -65,74 +65,74 @@ func (n *NetworkConfig) ConnectToService() bool {
 	if err := client.Ping(); err != nil {
 		log.Printf("Service ping failed: %v", err)
 		client.Close()
-		n.useService = false
+		network_config.useService = false
 		return false
 	}
 
-	n.serviceClient = client
-	n.useService = true
+	network_config.serviceClient = client
+	network_config.useService = true
 	log.Printf("Connected to VPN MultiTunnel service")
 	return true
 }
 
 // DisconnectFromService closes the service connection
-func (n *NetworkConfig) DisconnectFromService() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (network_config *NetworkConfig) DisconnectFromService() {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
 
-	if n.serviceClient != nil {
-		n.serviceClient.Close()
-		n.serviceClient = nil
+	if network_config.serviceClient != nil {
+		network_config.serviceClient.Close()
+		network_config.serviceClient = nil
 	}
-	n.useService = false
+	network_config.useService = false
 }
 
 // IsServiceConnected returns whether the service is connected
-func (n *NetworkConfig) IsServiceConnected() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.useService && n.serviceClient != nil
+func (network_config *NetworkConfig) IsServiceConnected() bool {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	return network_config.useService && network_config.serviceClient != nil
 }
 
 // SetUseService sets whether to use the service for privileged operations
-func (n *NetworkConfig) SetUseService(use bool) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.useService = use
+func (network_config *NetworkConfig) SetUseService(use bool) {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	network_config.useService = use
 }
 
 // SetDNSProxyAddress sets the DNS proxy listen address
-func (n *NetworkConfig) SetDNSProxyAddress(address string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.dnsProxyAddress = address
+func (network_config *NetworkConfig) SetDNSProxyAddress(address string) {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	network_config.dnsProxyAddress = address
 }
 
 // GetDNSProxyAddress returns the DNS proxy listen address (default: 127.0.0.53)
-func (n *NetworkConfig) GetDNSProxyAddress() string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.dnsProxyAddress == "" {
+func (network_config *NetworkConfig) GetDNSProxyAddress() string {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	if network_config.dnsProxyAddress == "" {
 		return "127.0.0.53"
 	}
-	return n.dnsProxyAddress
+	return network_config.dnsProxyAddress
 }
 
 // SetDNSFallbackServer sets the fallback DNS server address
-func (n *NetworkConfig) SetDNSFallbackServer(server string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.dnsFallbackServer = server
+func (network_config *NetworkConfig) SetDNSFallbackServer(server string) {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	network_config.dnsFallbackServer = server
 }
 
 // GetDNSFallbackServer returns the fallback DNS server (default: 8.8.8.8)
-func (n *NetworkConfig) GetDNSFallbackServer() string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.dnsFallbackServer == "" {
+func (network_config *NetworkConfig) GetDNSFallbackServer() string {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	if network_config.dnsFallbackServer == "" {
 		return "8.8.8.8"
 	}
-	return n.dnsFallbackServer
+	return network_config.dnsFallbackServer
 }
 
 // IsAdmin checks if the application is running with administrator privileges
@@ -150,9 +150,9 @@ func hideWindow(cmd *exec.Cmd) {
 }
 
 // EnsureLoopbackIPs ensures the required loopback IPs are configured
-func (n *NetworkConfig) EnsureLoopbackIPs(ips []string) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (network_config *NetworkConfig) EnsureLoopbackIPs(ips []string) error {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
 
 	if !IsAdmin() {
 		return fmt.Errorf("administrator privileges required to configure loopback IPs")
@@ -164,17 +164,17 @@ func (n *NetworkConfig) EnsureLoopbackIPs(ips []string) error {
 		}
 
 		// Check if IP already exists
-		if n.loopbackIPExists(ip) {
+		if network_config.loopbackIPExists(ip) {
 			log.Printf("Loopback IP %s already configured", ip)
 			continue
 		}
 
 		// Add the loopback IP
-		if err := n.addLoopbackIP(ip); err != nil {
+		if err := network_config.addLoopbackIP(ip); err != nil {
 			log.Printf("Failed to add loopback IP %s: %v", ip, err)
 			// Continue with other IPs
 		} else {
-			n.configuredIPs = append(n.configuredIPs, ip)
+			network_config.configuredIPs = append(network_config.configuredIPs, ip)
 			log.Printf("Added loopback IP %s", ip)
 		}
 	}
@@ -183,21 +183,21 @@ func (n *NetworkConfig) EnsureLoopbackIPs(ips []string) error {
 }
 
 // LoopbackIPExists checks if a loopback IP is already configured (public)
-func (n *NetworkConfig) LoopbackIPExists(ip string) bool {
-	return n.loopbackIPExists(ip)
+func (network_config *NetworkConfig) LoopbackIPExists(ip string) bool {
+	return network_config.loopbackIPExists(ip)
 }
 
 // loopbackIPExists checks if a loopback IP is already configured
-func (n *NetworkConfig) loopbackIPExists(ip string) bool {
+func (network_config *NetworkConfig) loopbackIPExists(ip string) bool {
 	// Check cache first
-	n.mu.Lock()
-	for _, configuredIP := range n.configuredIPs {
+	network_config.mu.Lock()
+	for _, configuredIP := range network_config.configuredIPs {
 		if configuredIP == ip {
-			n.mu.Unlock()
+			network_config.mu.Unlock()
 			return true
 		}
 	}
-	n.mu.Unlock()
+	network_config.mu.Unlock()
 
 	// Try ping - fastest and most reliable check
 	cmd := exec.Command("ping", "-n", "1", "-w", "100", ip)
@@ -205,9 +205,9 @@ func (n *NetworkConfig) loopbackIPExists(ip string) bool {
 	err := cmd.Run()
 	if err == nil {
 		// IP responded, add to cache
-		n.mu.Lock()
-		n.configuredIPs = append(n.configuredIPs, ip)
-		n.mu.Unlock()
+		network_config.mu.Lock()
+		network_config.configuredIPs = append(network_config.configuredIPs, ip)
+		network_config.mu.Unlock()
 		return true
 	}
 
@@ -220,15 +220,15 @@ func (n *NetworkConfig) loopbackIPExists(ip string) bool {
 	}
 	exists := strings.Contains(string(output), ip)
 	if exists {
-		n.mu.Lock()
-		n.configuredIPs = append(n.configuredIPs, ip)
-		n.mu.Unlock()
+		network_config.mu.Lock()
+		network_config.configuredIPs = append(network_config.configuredIPs, ip)
+		network_config.mu.Unlock()
 	}
 	return exists
 }
 
 // addLoopbackIP adds a loopback IP address
-func (n *NetworkConfig) addLoopbackIP(ip string) error {
+func (network_config *NetworkConfig) addLoopbackIP(ip string) error {
 	// netsh interface ipv4 add address "Loopback Pseudo-Interface 1" <ip> 255.255.255.0
 	cmd := exec.Command("netsh", "interface", "ipv4", "add", "address",
 		"Loopback Pseudo-Interface 1", ip, "255.255.255.0")
@@ -241,7 +241,7 @@ func (n *NetworkConfig) addLoopbackIP(ip string) error {
 }
 
 // RemoveLoopbackIP removes a loopback IP address
-func (n *NetworkConfig) RemoveLoopbackIP(ip string) error {
+func (network_config *NetworkConfig) RemoveLoopbackIP(ip string) error {
 	if ip == "127.0.0.1" {
 		return nil // Never remove default loopback
 	}
@@ -257,22 +257,22 @@ func (n *NetworkConfig) RemoveLoopbackIP(ip string) error {
 }
 
 // CleanupLoopbackIPs removes all loopback IPs we added
-func (n *NetworkConfig) CleanupLoopbackIPs() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (network_config *NetworkConfig) CleanupLoopbackIPs() {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
 
-	for _, ip := range n.configuredIPs {
-		if err := n.RemoveLoopbackIP(ip); err != nil {
+	for _, ip := range network_config.configuredIPs {
+		if err := network_config.RemoveLoopbackIP(ip); err != nil {
 			log.Printf("Failed to remove loopback IP %s: %v", ip, err)
 		} else {
 			log.Printf("Removed loopback IP %s", ip)
 		}
 	}
-	n.configuredIPs = []string{}
+	network_config.configuredIPs = []string{}
 }
 
 // GetActiveNetworkInterface returns the name of the primary network interface
-func (n *NetworkConfig) GetActiveNetworkInterface() (string, error) {
+func (network_config *NetworkConfig) GetActiveNetworkInterface() (string, error) {
 	// Use PowerShell to get the active interface
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command",
 		"Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Select-Object -ExpandProperty InterfaceAlias | Select-Object -First 1")
@@ -285,7 +285,7 @@ func (n *NetworkConfig) GetActiveNetworkInterface() (string, error) {
 }
 
 // GetCurrentDNS gets the current IPv4 DNS servers for an interface
-func (n *NetworkConfig) GetCurrentDNS(interfaceName string) ([]string, error) {
+func (network_config *NetworkConfig) GetCurrentDNS(interfaceName string) ([]string, error) {
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command",
 		fmt.Sprintf("(Get-DnsClientServerAddress -InterfaceAlias '%s' -AddressFamily IPv4).ServerAddresses -join ','", interfaceName))
 	hideWindow(cmd)
@@ -302,7 +302,7 @@ func (n *NetworkConfig) GetCurrentDNS(interfaceName string) ([]string, error) {
 }
 
 // GetCurrentDNSv6 gets the current IPv6 DNS servers for an interface
-func (n *NetworkConfig) GetCurrentDNSv6(interfaceName string) ([]string, error) {
+func (network_config *NetworkConfig) GetCurrentDNSv6(interfaceName string) ([]string, error) {
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command",
 		fmt.Sprintf("(Get-DnsClientServerAddress -InterfaceAlias '%s' -AddressFamily IPv6).ServerAddresses -join ','", interfaceName))
 	hideWindow(cmd)
@@ -319,12 +319,12 @@ func (n *NetworkConfig) GetCurrentDNSv6(interfaceName string) ([]string, error) 
 }
 
 // SetDNS sets the IPv4 DNS servers for an interface
-func (n *NetworkConfig) SetDNS(interfaceName string, dnsServers []string) error {
+func (network_config *NetworkConfig) SetDNS(interfaceName string, dnsServers []string) error {
 	// Try to use the service first
-	n.mu.Lock()
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
+	network_config.mu.Unlock()
 
 	if useService {
 		log.Printf("Setting DNS for %s via service: %v", interfaceName, dnsServers)
@@ -352,12 +352,12 @@ func (n *NetworkConfig) SetDNS(interfaceName string, dnsServers []string) error 
 }
 
 // SetDNSv6 sets the IPv6 DNS servers for an interface
-func (n *NetworkConfig) SetDNSv6(interfaceName string, dnsServers []string) error {
+func (network_config *NetworkConfig) SetDNSv6(interfaceName string, dnsServers []string) error {
 	// Try to use the service first
-	n.mu.Lock()
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
+	network_config.mu.Unlock()
 
 	if useService {
 		log.Printf("Setting IPv6 DNS for %s via service: %v", interfaceName, dnsServers)
@@ -385,12 +385,12 @@ func (n *NetworkConfig) SetDNSv6(interfaceName string, dnsServers []string) erro
 }
 
 // ResetDNS resets DNS to automatic (DHCP)
-func (n *NetworkConfig) ResetDNS(interfaceName string) error {
+func (network_config *NetworkConfig) ResetDNS(interfaceName string) error {
 	// Try to use the service first
-	n.mu.Lock()
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
+	network_config.mu.Unlock()
 
 	if useService {
 		log.Printf("Resetting DNS for %s via service", interfaceName)
@@ -417,42 +417,42 @@ func (n *NetworkConfig) ResetDNS(interfaceName string) error {
 }
 
 // ConfigureSystemDNS configures the system to use our DNS proxy (both IPv4 and IPv6) with UAC elevation
-func (n *NetworkConfig) ConfigureSystemDNS(dnsProxyAddress string) error {
-	n.mu.Lock()
+func (network_config *NetworkConfig) ConfigureSystemDNS(dnsProxyAddress string) error {
+	network_config.mu.Lock()
 
-	if n.dnsConfigured {
-		n.mu.Unlock()
+	if network_config.dnsConfigured {
+		network_config.mu.Unlock()
 		return nil // Already configured
 	}
 
 	// Get active interface
-	interfaceName, err := n.GetActiveNetworkInterface()
+	interfaceName, err := network_config.GetActiveNetworkInterface()
 	if err != nil {
-		n.mu.Unlock()
+		network_config.mu.Unlock()
 		return fmt.Errorf("failed to get active interface: %w", err)
 	}
 
 	// Save original IPv4 DNS
-	originalDNS, err := n.GetCurrentDNS(interfaceName)
+	originalDNS, err := network_config.GetCurrentDNS(interfaceName)
 	if err != nil {
 		log.Printf("Warning: could not get original DNS: %v", err)
 		originalDNS = []string{"8.8.8.8"} // Fallback
 	}
-	n.originalDNS[interfaceName] = originalDNS
+	network_config.originalDNS[interfaceName] = originalDNS
 
 	// Save original IPv6 DNS
-	originalDNSv6, err := n.GetCurrentDNSv6(interfaceName)
+	originalDNSv6, err := network_config.GetCurrentDNSv6(interfaceName)
 	if err != nil {
 		log.Printf("Warning: could not get original IPv6 DNS: %v", err)
 		originalDNSv6 = []string{} // No fallback for IPv6
 	}
-	n.originalDNSv6[interfaceName] = originalDNSv6
+	network_config.originalDNSv6[interfaceName] = originalDNSv6
 
 	// Check if we can use the service
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
 
-	n.mu.Unlock()
+	network_config.mu.Unlock()
 
 	// Try to use the service first (no UAC prompt)
 	if useService {
@@ -460,9 +460,9 @@ func (n *NetworkConfig) ConfigureSystemDNS(dnsProxyAddress string) error {
 		if err := client.ConfigureSystemDNS(dnsProxyAddress); err != nil {
 			log.Printf("Warning: service ConfigureSystemDNS failed: %v, falling back to UAC", err)
 		} else {
-			n.mu.Lock()
-			n.dnsConfigured = true
-			n.mu.Unlock()
+			network_config.mu.Lock()
+			network_config.dnsConfigured = true
+			network_config.mu.Unlock()
 			log.Printf("Configured system DNS to %s via service (original IPv4: %v, IPv6: %v)", dnsProxyAddress, originalDNS, originalDNSv6)
 			return nil
 		}
@@ -479,9 +479,9 @@ func (n *NetworkConfig) ConfigureSystemDNS(dnsProxyAddress string) error {
 		return fmt.Errorf("failed to configure DNS: %w", err)
 	}
 
-	n.mu.Lock()
-	n.dnsConfigured = true
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	network_config.dnsConfigured = true
+	network_config.mu.Unlock()
 
 	log.Printf("Configured system DNS to %s / ::1 (original IPv4: %v, IPv6: %v)", dnsProxyAddress, originalDNS, originalDNSv6)
 	return nil
@@ -489,28 +489,28 @@ func (n *NetworkConfig) ConfigureSystemDNS(dnsProxyAddress string) error {
 
 // RestoreSystemDNS restores the original DNS configuration (both IPv4 and IPv6) with UAC elevation
 // If no original DNS was saved (e.g., app restarted), it resets to DHCP
-func (n *NetworkConfig) RestoreSystemDNS() error {
-	n.mu.Lock()
+func (network_config *NetworkConfig) RestoreSystemDNS() error {
+	network_config.mu.Lock()
 
 	// Check if we have original DNS saved
-	hasOriginal := n.dnsConfigured && (len(n.originalDNS) > 0 || len(n.originalDNSv6) > 0)
-	dnsProxyAddr := n.dnsProxyAddress
+	hasOriginal := network_config.dnsConfigured && (len(network_config.originalDNS) > 0 || len(network_config.originalDNSv6) > 0)
+	dnsProxyAddr := network_config.dnsProxyAddress
 	if dnsProxyAddr == "" {
 		dnsProxyAddr = "127.0.0.53"
 	}
 
 	// If no original saved, check if system DNS is currently our proxy address and reset to DHCP
 	if !hasOriginal {
-		n.mu.Unlock()
+		network_config.mu.Unlock()
 
 		// Get active interface
-		interfaceName, err := n.GetActiveNetworkInterface()
+		interfaceName, err := network_config.GetActiveNetworkInterface()
 		if err != nil {
 			return fmt.Errorf("failed to get active interface: %w", err)
 		}
 
 		// Check if DNS is currently our proxy address
-		currentDNS, _ := n.GetCurrentDNS(interfaceName)
+		currentDNS, _ := network_config.GetCurrentDNS(interfaceName)
 		if len(currentDNS) == 0 || currentDNS[0] != dnsProxyAddr {
 			return nil // DNS is not configured by us, nothing to restore
 		}
@@ -532,7 +532,7 @@ func (n *NetworkConfig) RestoreSystemDNS() error {
 	var commands []string
 
 	// Restore IPv4 DNS
-	for interfaceName, originalDNS := range n.originalDNS {
+	for interfaceName, originalDNS := range network_config.originalDNS {
 		if len(originalDNS) == 0 {
 			// Reset to DHCP
 			commands = append(commands, fmt.Sprintf(
@@ -548,7 +548,7 @@ func (n *NetworkConfig) RestoreSystemDNS() error {
 	}
 
 	// Restore IPv6 DNS
-	for interfaceName, originalDNSv6 := range n.originalDNSv6 {
+	for interfaceName, originalDNSv6 := range network_config.originalDNSv6 {
 		if len(originalDNSv6) == 0 {
 			// Reset IPv6 to DHCP - use a different approach
 			commands = append(commands, fmt.Sprintf(
@@ -563,14 +563,14 @@ func (n *NetworkConfig) RestoreSystemDNS() error {
 		}
 	}
 
-	n.mu.Unlock()
+	network_config.mu.Unlock()
 
 	if len(commands) == 0 {
-		n.mu.Lock()
-		n.originalDNS = make(map[string][]string)
-		n.originalDNSv6 = make(map[string][]string)
-		n.dnsConfigured = false
-		n.mu.Unlock()
+		network_config.mu.Lock()
+		network_config.originalDNS = make(map[string][]string)
+		network_config.originalDNSv6 = make(map[string][]string)
+		network_config.dnsConfigured = false
+		network_config.mu.Unlock()
 		return nil
 	}
 
@@ -583,54 +583,54 @@ func (n *NetworkConfig) RestoreSystemDNS() error {
 		return fmt.Errorf("failed to restore DNS: %w", err)
 	}
 
-	n.mu.Lock()
-	n.originalDNS = make(map[string][]string)
-	n.originalDNSv6 = make(map[string][]string)
-	n.dnsConfigured = false
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	network_config.originalDNS = make(map[string][]string)
+	network_config.originalDNSv6 = make(map[string][]string)
+	network_config.dnsConfigured = false
+	network_config.mu.Unlock()
 
 	log.Printf("DNS configuration restored")
 	return nil
 }
 
 // IsDNSConfigured returns whether DNS has been configured by us
-func (n *NetworkConfig) IsDNSConfigured() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.dnsConfigured
+func (network_config *NetworkConfig) IsDNSConfigured() bool {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	return network_config.dnsConfigured
 }
 
 // IsDNSClientStopped returns whether we stopped the DNS Client service
-func (n *NetworkConfig) IsDNSClientStopped() bool {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.dnsClientStopped
+func (network_config *NetworkConfig) IsDNSClientStopped() bool {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	return network_config.dnsClientStopped
 }
 
 // IsTransparentDNSConfigured checks if the system DNS is pointing to our DNS proxy
 // This checks the actual system state, not just the runtime flag
-func (n *NetworkConfig) IsTransparentDNSConfigured() bool {
+func (network_config *NetworkConfig) IsTransparentDNSConfigured() bool {
 	// First check runtime flag
-	n.mu.Lock()
-	if n.dnsConfigured {
-		n.mu.Unlock()
+	network_config.mu.Lock()
+	if network_config.dnsConfigured {
+		network_config.mu.Unlock()
 		return true
 	}
-	n.mu.Unlock()
+	network_config.mu.Unlock()
 
 	// Check actual system DNS
-	interfaceName, err := n.GetActiveNetworkInterface()
+	interfaceName, err := network_config.GetActiveNetworkInterface()
 	if err != nil {
 		return false
 	}
 
-	dnsServers, err := n.GetCurrentDNS(interfaceName)
+	dnsServers, err := network_config.GetCurrentDNS(interfaceName)
 	if err != nil || len(dnsServers) == 0 {
 		return false
 	}
 
 	// Check if primary DNS is our DNS proxy address
-	dnsProxyAddr := n.GetDNSProxyAddress()
+	dnsProxyAddr := network_config.GetDNSProxyAddress()
 	return dnsServers[0] == dnsProxyAddr
 }
 
@@ -644,11 +644,11 @@ func FlushDNSCache() error {
 // StopDNSClientService stops and disables the Windows DNS Client service (requires elevation or service)
 func StopDNSClientService() error {
 	// Try to use the service first
-	n := GetNetworkConfig()
-	n.mu.Lock()
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
-	n.mu.Unlock()
+	network_config := GetNetworkConfig()
+	network_config.mu.Lock()
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
+	network_config.mu.Unlock()
 
 	if useService {
 		log.Printf("Stopping DNS Client service via VPN MultiTunnel service...")
@@ -668,11 +668,11 @@ func StopDNSClientService() error {
 // StartDNSClientService re-enables and starts the Windows DNS Client service (requires elevation or service)
 func StartDNSClientService() error {
 	// Try to use the service first
-	n := GetNetworkConfig()
-	n.mu.Lock()
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
-	n.mu.Unlock()
+	network_config := GetNetworkConfig()
+	network_config.mu.Lock()
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
+	network_config.mu.Unlock()
 
 	if useService {
 		log.Printf("Starting DNS Client service via VPN MultiTunnel service...")
@@ -704,17 +704,17 @@ func IsDNSClientRunning() bool {
 // SetupTransparentDNS configures the system for transparent DNS proxy
 // Sets system DNS to our proxy address (default: 127.0.0.53)
 // Using a different loopback IP avoids conflicts with Windows DNS Client on 127.0.0.1:53
-func (n *NetworkConfig) SetupTransparentDNS() error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (network_config *NetworkConfig) SetupTransparentDNS() error {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
 
-	if n.dnsConfigured {
+	if network_config.dnsConfigured {
 		log.Printf("Transparent DNS already configured")
 		return nil
 	}
 
 	// Get DNS proxy address
-	dnsProxyAddr := n.dnsProxyAddress
+	dnsProxyAddr := network_config.dnsProxyAddress
 	if dnsProxyAddr == "" {
 		dnsProxyAddr = "127.0.0.53"
 	}
@@ -722,69 +722,69 @@ func (n *NetworkConfig) SetupTransparentDNS() error {
 	// Ensure the loopback IP exists (e.g., 127.0.0.53) so the system resolver can reach it
 	if dnsProxyAddr != "127.0.0.1" {
 		log.Printf("Ensuring loopback IP %s exists for DNS proxy...", dnsProxyAddr)
-		n.mu.Unlock()
-		if err := n.AddLoopbackIPElevated(dnsProxyAddr); err != nil {
+		network_config.mu.Unlock()
+		if err := network_config.AddLoopbackIPElevated(dnsProxyAddr); err != nil {
 			log.Printf("Warning: could not add loopback IP %s: %v (may already exist)", dnsProxyAddr, err)
 		}
-		n.mu.Lock()
+		network_config.mu.Lock()
 	}
 
 	// Get active interface
-	interfaceName, err := n.GetActiveNetworkInterface()
+	interfaceName, err := network_config.GetActiveNetworkInterface()
 	if err != nil {
 		return fmt.Errorf("failed to get active interface: %w", err)
 	}
 
 	// Save original DNS
-	n.mu.Unlock()
-	originalDNS, err := n.GetCurrentDNS(interfaceName)
-	n.mu.Lock()
+	network_config.mu.Unlock()
+	originalDNS, err := network_config.GetCurrentDNS(interfaceName)
+	network_config.mu.Lock()
 	if err != nil {
 		log.Printf("Warning: could not get original DNS: %v", err)
-		fallback_dns_server := n.dnsFallbackServer
+		fallback_dns_server := network_config.dnsFallbackServer
 		if fallback_dns_server == "" {
 			fallback_dns_server = "8.8.8.8"
 		}
 		originalDNS = []string{fallback_dns_server}
 	}
-	n.originalDNS[interfaceName] = originalDNS
+	network_config.originalDNS[interfaceName] = originalDNS
 
 	// Save original IPv6 DNS
-	n.mu.Unlock()
-	originalDNSv6, err := n.GetCurrentDNSv6(interfaceName)
-	n.mu.Lock()
+	network_config.mu.Unlock()
+	originalDNSv6, err := network_config.GetCurrentDNSv6(interfaceName)
+	network_config.mu.Lock()
 	if err != nil {
 		log.Printf("Warning: could not get original IPv6 DNS: %v", err)
 	}
-	n.originalDNSv6[interfaceName] = originalDNSv6
+	network_config.originalDNSv6[interfaceName] = originalDNSv6
 
 	// Set IPv4 DNS to our proxy address with configurable fallback
-	fallback_server := n.dnsFallbackServer
+	fallback_server := network_config.dnsFallbackServer
 	if fallback_server == "" {
 		fallback_server = "8.8.8.8"
 	}
-	n.mu.Unlock()
-	err = n.SetDNS(interfaceName, []string{dnsProxyAddr, fallback_server})
-	n.mu.Lock()
+	network_config.mu.Unlock()
+	err = network_config.SetDNS(interfaceName, []string{dnsProxyAddr, fallback_server})
+	network_config.mu.Lock()
 	if err != nil {
 		return fmt.Errorf("failed to set DNS: %w", err)
 	}
 
 	// Set IPv6 DNS to ::1 (our proxy also listens there)
 	// This prevents Windows from preferring IPv6 DNS (e.g., fe80::1) over our proxy
-	n.mu.Unlock()
-	if set_ipv6_err := n.SetDNSv6(interfaceName, []string{"::1"}); set_ipv6_err != nil {
+	network_config.mu.Unlock()
+	if set_ipv6_err := network_config.SetDNSv6(interfaceName, []string{"::1"}); set_ipv6_err != nil {
 		log.Printf("Warning: could not set IPv6 DNS to ::1: %v", set_ipv6_err)
 	}
-	n.mu.Lock()
+	network_config.mu.Lock()
 
-	n.dnsConfigured = true
+	network_config.dnsConfigured = true
 	log.Printf("Transparent DNS configured: system DNS set to %s,8.8.8.8 + ::1 (original IPv4: %v, IPv6: %v)", dnsProxyAddr, originalDNS, originalDNSv6)
 	return nil
 }
 
 // setDNSElevated sets DNS with UAC elevation
-func (n *NetworkConfig) setDNSElevated(interfaceName, dnsAddress string) error {
+func (network_config *NetworkConfig) setDNSElevated(interfaceName, dnsAddress string) error {
 	psCommand := fmt.Sprintf(`Set-DnsClientServerAddress -InterfaceAlias '%s' -ServerAddresses %s`, interfaceName, dnsAddress)
 	args := fmt.Sprintf(`-WindowStyle Hidden -Command "%s"`, psCommand)
 
@@ -792,11 +792,11 @@ func (n *NetworkConfig) setDNSElevated(interfaceName, dnsAddress string) error {
 }
 
 // RestoreTransparentDNS restores the original DNS configuration and restarts DNS Client
-func (n *NetworkConfig) RestoreTransparentDNS() error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (network_config *NetworkConfig) RestoreTransparentDNS() error {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
 
-	if !n.dnsConfigured {
+	if !network_config.dnsConfigured {
 		return nil // Nothing to restore
 	}
 
@@ -804,60 +804,60 @@ func (n *NetworkConfig) RestoreTransparentDNS() error {
 
 	// Restore original DNS for each interface
 	// SetDNS and ResetDNS will use the service if available
-	for interfaceName, originalDNS := range n.originalDNS {
+	for interfaceName, originalDNS := range network_config.originalDNS {
 		if len(originalDNS) == 0 {
 			// Reset to DHCP
-			n.mu.Unlock()
-			if err := n.ResetDNS(interfaceName); err != nil {
+			network_config.mu.Unlock()
+			if err := network_config.ResetDNS(interfaceName); err != nil {
 				log.Printf("Failed to reset DNS for %s: %v", interfaceName, err)
 				lastErr = err
 			} else {
 				log.Printf("Reset DNS to DHCP for %s", interfaceName)
 			}
-			n.mu.Lock()
+			network_config.mu.Lock()
 		} else {
 			// Restore original DNS
-			n.mu.Unlock()
-			if err := n.SetDNS(interfaceName, originalDNS); err != nil {
+			network_config.mu.Unlock()
+			if err := network_config.SetDNS(interfaceName, originalDNS); err != nil {
 				log.Printf("Failed to restore DNS for %s: %v", interfaceName, err)
 				lastErr = err
 			} else {
 				log.Printf("Restored DNS to %v for %s", originalDNS, interfaceName)
 			}
-			n.mu.Lock()
+			network_config.mu.Lock()
 		}
 	}
 
 	// Restore original IPv6 DNS for each interface
-	for interfaceName, originalDNSv6 := range n.originalDNSv6 {
-		n.mu.Unlock()
+	for interfaceName, originalDNSv6 := range network_config.originalDNSv6 {
+		network_config.mu.Unlock()
 		if len(originalDNSv6) == 0 {
 			// Reset IPv6 DNS to automatic (same as ResetDNS but for IPv6)
-			if reset_ipv6_err := n.ResetDNS(interfaceName); reset_ipv6_err != nil {
+			if reset_ipv6_err := network_config.ResetDNS(interfaceName); reset_ipv6_err != nil {
 				log.Printf("Warning: could not reset IPv6 DNS for %s: %v", interfaceName, reset_ipv6_err)
 			}
 		} else {
-			if restore_ipv6_err := n.SetDNSv6(interfaceName, originalDNSv6); restore_ipv6_err != nil {
+			if restore_ipv6_err := network_config.SetDNSv6(interfaceName, originalDNSv6); restore_ipv6_err != nil {
 				log.Printf("Warning: could not restore IPv6 DNS for %s: %v", interfaceName, restore_ipv6_err)
 			}
 		}
-		n.mu.Lock()
+		network_config.mu.Lock()
 	}
 
 	// Restart DNS Client if we stopped it
-	if n.dnsClientStopped && n.dnsClientWasRunning {
-		n.mu.Unlock()
+	if network_config.dnsClientStopped && network_config.dnsClientWasRunning {
+		network_config.mu.Unlock()
 		if err := StartDNSClientService(); err != nil {
 			log.Printf("Failed to restart DNS Client service: %v", err)
 			lastErr = err
 		}
-		n.mu.Lock()
-		n.dnsClientStopped = false
+		network_config.mu.Lock()
+		network_config.dnsClientStopped = false
 	}
 
-	n.originalDNS = make(map[string][]string)
-	n.originalDNSv6 = make(map[string][]string)
-	n.dnsConfigured = false
+	network_config.originalDNS = make(map[string][]string)
+	network_config.originalDNSv6 = make(map[string][]string)
+	network_config.dnsConfigured = false
 	log.Printf("Transparent DNS restored")
 	return lastErr
 }
@@ -893,31 +893,31 @@ func RunElevated(program string, args string) error {
 }
 
 // AddLoopbackIPElevated adds a loopback IP with UAC elevation or service
-func (n *NetworkConfig) AddLoopbackIPElevated(ip string) error {
+func (network_config *NetworkConfig) AddLoopbackIPElevated(ip string) error {
 	if ip == "127.0.0.1" {
 		return nil
 	}
 
 	// Check if already exists
-	if n.loopbackIPExists(ip) {
+	if network_config.loopbackIPExists(ip) {
 		log.Printf("Loopback IP %s already exists", ip)
 		return nil
 	}
 
 	// Try to use the service first
-	n.mu.Lock()
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
+	network_config.mu.Unlock()
 
 	if useService {
 		log.Printf("Adding loopback IP %s via service...", ip)
 		if err := client.AddLoopbackIP(ip); err != nil {
 			log.Printf("Service call failed, falling back to UAC: %v", err)
 		} else {
-			n.mu.Lock()
-			n.configuredIPs = append(n.configuredIPs, ip)
-			n.mu.Unlock()
+			network_config.mu.Lock()
+			network_config.configuredIPs = append(network_config.configuredIPs, ip)
+			network_config.mu.Unlock()
 			log.Printf("Added loopback IP %s via service", ip)
 			return nil
 		}
@@ -932,9 +932,9 @@ func (n *NetworkConfig) AddLoopbackIPElevated(ip string) error {
 		return fmt.Errorf("failed to add loopback IP: %w", err)
 	}
 
-	n.mu.Lock()
-	n.configuredIPs = append(n.configuredIPs, ip)
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	network_config.configuredIPs = append(network_config.configuredIPs, ip)
+	network_config.mu.Unlock()
 
 	log.Printf("Added loopback IP %s", ip)
 	return nil
@@ -982,33 +982,33 @@ func (network_config *NetworkConfig) RemoveLoopbackIPElevated(ip string) error {
 }
 
 // ConfigureSystemDNSElevated configures DNS with UAC elevation or service
-func (n *NetworkConfig) ConfigureSystemDNSElevated(dnsAddress string) error {
-	n.mu.Lock()
-	if n.dnsConfigured {
-		n.mu.Unlock()
+func (network_config *NetworkConfig) ConfigureSystemDNSElevated(dnsAddress string) error {
+	network_config.mu.Lock()
+	if network_config.dnsConfigured {
+		network_config.mu.Unlock()
 		return nil
 	}
 
-	useService := n.useService && n.serviceClient != nil
-	client := n.serviceClient
-	n.mu.Unlock()
+	useService := network_config.useService && network_config.serviceClient != nil
+	client := network_config.serviceClient
+	network_config.mu.Unlock()
 
 	// Get active interface
-	interfaceName, err := n.GetActiveNetworkInterface()
+	interfaceName, err := network_config.GetActiveNetworkInterface()
 	if err != nil {
 		return fmt.Errorf("failed to get active interface: %w", err)
 	}
 
 	// Save original DNS
-	originalDNS, err := n.GetCurrentDNS(interfaceName)
+	originalDNS, err := network_config.GetCurrentDNS(interfaceName)
 	if err != nil {
 		log.Printf("Warning: could not get original DNS: %v", err)
 		originalDNS = []string{"8.8.8.8"}
 	}
 
-	n.mu.Lock()
-	n.originalDNS[interfaceName] = originalDNS
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	network_config.originalDNS[interfaceName] = originalDNS
+	network_config.mu.Unlock()
 
 	// Try to use the service first
 	if useService {
@@ -1016,9 +1016,9 @@ func (n *NetworkConfig) ConfigureSystemDNSElevated(dnsAddress string) error {
 		if err := client.ConfigureSystemDNS(dnsAddress); err != nil {
 			log.Printf("Service call failed, falling back to UAC: %v", err)
 		} else {
-			n.mu.Lock()
-			n.dnsConfigured = true
-			n.mu.Unlock()
+			network_config.mu.Lock()
+			network_config.dnsConfigured = true
+			network_config.mu.Unlock()
 			log.Printf("Configured system DNS to %s via service", dnsAddress)
 			return nil
 		}
@@ -1033,9 +1033,9 @@ func (n *NetworkConfig) ConfigureSystemDNSElevated(dnsAddress string) error {
 		return fmt.Errorf("failed to set DNS: %w", err)
 	}
 
-	n.mu.Lock()
-	n.dnsConfigured = true
-	n.mu.Unlock()
+	network_config.mu.Lock()
+	network_config.dnsConfigured = true
+	network_config.mu.Unlock()
 	log.Printf("Configured system DNS to %s,8.8.8.8", dnsAddress)
 	return nil
 }

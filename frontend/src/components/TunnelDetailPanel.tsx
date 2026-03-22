@@ -101,7 +101,7 @@ function TunnelDetailPanel({
       try {
         const connections = await window.go.app.App.GetActiveConnections()
         // Filter connections for this profile
-        const profileHosts = (connections || []).filter(c => c.profileId === profile.id)
+        const profileHosts = (connections || []).filter(connection => connection.profileId === profile.id)
         setDetectedHosts(profileHosts)
       } catch (err) {
         console.error('Failed to fetch detected hosts:', err)
@@ -353,11 +353,11 @@ function TunnelDetailPanel({
                 <input
                   type="text"
                   value={profileName}
-                  onChange={(e) => setProfileName(e.target.value)}
+                  onChange={(event) => setProfileName(event.target.value)}
                   onBlur={handleSaveName}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSaveName()
-                    if (e.key === 'Escape') { setProfileName(profile.name); setEditingName(false) }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') handleSaveName()
+                    if (event.key === 'Escape') { setProfileName(profile.name); setEditingName(false) }
                   }}
                   className="text-xl font-bold text-white bg-dark-700 border border-dark-500 rounded px-2 py-0.5 outline-none focus:border-primary-500"
                   autoFocus
@@ -795,7 +795,7 @@ function TunnelDetailPanel({
                 <input
                   type="text"
                   value={healthIP}
-                  onChange={(e) => setHealthIP(e.target.value)}
+                  onChange={(event) => setHealthIP(event.target.value)}
                   className="flex-1 input py-1 text-sm"
                   placeholder="e.g., 10.0.0.1"
                 />
@@ -805,7 +805,7 @@ function TunnelDetailPanel({
                 <input
                   type="number"
                   value={healthInterval}
-                  onChange={(e) => setHealthInterval(parseInt(e.target.value) || 30)}
+                  onChange={(event) => setHealthInterval(parseInt(event.target.value) || 30)}
                   className="w-20 input py-1 text-sm"
                   min="5"
                   max="300"
@@ -846,10 +846,10 @@ function TunnelDetailPanel({
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
-  const k = 1024
+  const bytes_per_kilobyte = 1024
   const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+  const size_unit_index = Math.floor(Math.log(bytes) / Math.log(bytes_per_kilobyte))
+  return parseFloat((bytes / Math.pow(bytes_per_kilobyte, size_unit_index)).toFixed(1)) + ' ' + sizes[size_unit_index]
 }
 
 export default TunnelDetailPanel

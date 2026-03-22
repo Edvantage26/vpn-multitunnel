@@ -277,11 +277,11 @@ func (app *App) syncProfileDNSToRules(profile config.Profile) {
 
 		// Find existing rule for this suffix
 		found := false
-		for i := range app.config.DNSProxy.Rules {
-			if app.config.DNSProxy.Rules[i].Suffix == suffix && app.config.DNSProxy.Rules[i].ProfileID == profile.ID {
+		for idx_rule := range app.config.DNSProxy.Rules {
+			if app.config.DNSProxy.Rules[idx_rule].Suffix == suffix && app.config.DNSProxy.Rules[idx_rule].ProfileID == profile.ID {
 				// Update existing rule
-				app.config.DNSProxy.Rules[i].DNSServer = profile.DNS.Server
-				app.config.DNSProxy.Rules[i].Hosts = profile.DNS.Hosts
+				app.config.DNSProxy.Rules[idx_rule].DNSServer = profile.DNS.Server
+				app.config.DNSProxy.Rules[idx_rule].Hosts = profile.DNS.Hosts
 				found = true
 				break
 			}

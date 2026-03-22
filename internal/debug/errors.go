@@ -48,7 +48,7 @@ func NewErrorCollector(bufferSize int) *ErrorCollector {
 }
 
 // Record records a new error
-func (c *ErrorCollector) Record(component, operation string, err error, context map[string]any) {
+func (error_collector *ErrorCollector) Record(component, operation string, err error, context map[string]any) {
 	entry := ErrorEntry{
 		Timestamp: time.Now(),
 		Component: component,
@@ -57,14 +57,14 @@ func (c *ErrorCollector) Record(component, operation string, err error, context 
 		Context:   context,
 		Resolved:  false,
 	}
-	c.buffer.Add(entry)
+	error_collector.buffer.Add(entry)
 
 	// Also log to the debug logger
 	GetLogger().Error(component, fmt.Sprintf("%s: %s", operation, err.Error()), context)
 }
 
 // RecordWithProfile records an error with a profile ID
-func (c *ErrorCollector) RecordWithProfile(component, profileID, operation string, err error, context map[string]any) {
+func (error_collector *ErrorCollector) RecordWithProfile(component, profileID, operation string, err error, context map[string]any) {
 	entry := ErrorEntry{
 		Timestamp: time.Now(),
 		Component: component,
@@ -74,48 +74,48 @@ func (c *ErrorCollector) RecordWithProfile(component, profileID, operation strin
 		Context:   context,
 		Resolved:  false,
 	}
-	c.buffer.Add(entry)
+	error_collector.buffer.Add(entry)
 
 	// Also log to the debug logger
 	fields := make(map[string]any)
-	for k, v := range context {
-		fields[k] = v
+	for context_key, context_value := range context {
+		fields[context_key] = context_value
 	}
 	GetLogger().ErrorProfile(component, profileID, fmt.Sprintf("%s: %s", operation, err.Error()), fields)
 }
 
 // GetRecent returns the most recent errors
-func (c *ErrorCollector) GetRecent(limit int) []ErrorEntry {
-	return c.buffer.GetLast(limit)
+func (error_collector *ErrorCollector) GetRecent(limit int) []ErrorEntry {
+	return error_collector.buffer.GetLast(limit)
 }
 
 // GetByComponent returns errors for a specific component
-func (c *ErrorCollector) GetByComponent(component string, limit int) []ErrorEntry {
+func (error_collector *ErrorCollector) GetByComponent(component string, limit int) []ErrorEntry {
 	filter := func(entry ErrorEntry) bool {
 		return entry.Component == component
 	}
-	return c.buffer.GetFiltered(filter, limit)
+	return error_collector.buffer.GetFiltered(filter, limit)
 }
 
 // GetByProfile returns errors for a specific profile
-func (c *ErrorCollector) GetByProfile(profileID string, limit int) []ErrorEntry {
+func (error_collector *ErrorCollector) GetByProfile(profileID string, limit int) []ErrorEntry {
 	filter := func(entry ErrorEntry) bool {
 		return entry.ProfileID == profileID
 	}
-	return c.buffer.GetFiltered(filter, limit)
+	return error_collector.buffer.GetFiltered(filter, limit)
 }
 
 // GetUnresolved returns all unresolved errors
-func (c *ErrorCollector) GetUnresolved(limit int) []ErrorEntry {
+func (error_collector *ErrorCollector) GetUnresolved(limit int) []ErrorEntry {
 	filter := func(entry ErrorEntry) bool {
 		return !entry.Resolved
 	}
-	return c.buffer.GetFiltered(filter, limit)
+	return error_collector.buffer.GetFiltered(filter, limit)
 }
 
 // GetRecentJSON returns recent errors as JSON
-func (c *ErrorCollector) GetRecentJSON(limit int) (string, error) {
-	errors := c.GetRecent(limit)
+func (error_collector *ErrorCollector) GetRecentJSON(limit int) (string, error) {
+	errors := error_collector.GetRecent(limit)
 	data, err := json.Marshal(errors)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal errors: %w", err)
@@ -124,19 +124,19 @@ func (c *ErrorCollector) GetRecentJSON(limit int) (string, error) {
 }
 
 // Count returns the total number of recorded errors
-func (c *ErrorCollector) Count() int {
-	return c.buffer.Count()
+func (error_collector *ErrorCollector) Count() int {
+	return error_collector.buffer.Count()
 }
 
 // CountUnresolved returns the number of unresolved errors
-func (c *ErrorCollector) CountUnresolved() int {
-	errors := c.GetUnresolved(c.buffer.Capacity())
+func (error_collector *ErrorCollector) CountUnresolved() int {
+	errors := error_collector.GetUnresolved(error_collector.buffer.Capacity())
 	return len(errors)
 }
 
 // Clear removes all error entries
-func (c *ErrorCollector) Clear() {
-	c.buffer.Clear()
+func (error_collector *ErrorCollector) Clear() {
+	error_collector.buffer.Clear()
 }
 
 // Convenience functions for global error collector

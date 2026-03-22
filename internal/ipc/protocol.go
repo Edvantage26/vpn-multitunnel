@@ -57,14 +57,14 @@ func NewRequest(op Operation) *Request {
 }
 
 // SetParam sets a parameter
-func (r *Request) SetParam(key string, value interface{}) *Request {
-	r.Params[key] = value
-	return r
+func (request *Request) SetParam(key string, value interface{}) *Request {
+	request.Params[key] = value
+	return request
 }
 
 // GetString gets a string parameter
-func (r *Request) GetString(key string) (string, error) {
-	v, ok := r.Params[key]
+func (request *Request) GetString(key string) (string, error) {
+	v, ok := request.Params[key]
 	if !ok {
 		return "", fmt.Errorf("parameter %s not found", key)
 	}
@@ -76,8 +76,8 @@ func (r *Request) GetString(key string) (string, error) {
 }
 
 // GetStringSlice gets a string slice parameter
-func (r *Request) GetStringSlice(key string) ([]string, error) {
-	v, ok := r.Params[key]
+func (request *Request) GetStringSlice(key string) ([]string, error) {
+	v, ok := request.Params[key]
 	if !ok {
 		return nil, fmt.Errorf("parameter %s not found", key)
 	}
@@ -118,22 +118,22 @@ func ErrorResponse(err error) *Response {
 }
 
 // SetData sets response data
-func (r *Response) SetData(key string, value interface{}) *Response {
-	if r.Data == nil {
-		r.Data = make(map[string]interface{})
+func (response *Response) SetData(key string, value interface{}) *Response {
+	if response.Data == nil {
+		response.Data = make(map[string]interface{})
 	}
-	r.Data[key] = value
-	return r
+	response.Data[key] = value
+	return response
 }
 
 // Encode encodes the request to JSON bytes
-func (r *Request) Encode() ([]byte, error) {
-	return json.Marshal(r)
+func (request *Request) Encode() ([]byte, error) {
+	return json.Marshal(request)
 }
 
 // Encode encodes the response to JSON bytes
-func (r *Response) Encode() ([]byte, error) {
-	return json.Marshal(r)
+func (response *Response) Encode() ([]byte, error) {
+	return json.Marshal(response)
 }
 
 // DecodeRequest decodes a request from JSON bytes

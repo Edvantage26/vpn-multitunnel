@@ -85,7 +85,7 @@ function ConfigFileEditor({ profileId, profileName, configFile, onClose }: Confi
           ) : (
             <textarea
               value={content}
-              onChange={(e) => setContent(e.target.value)}
+              onChange={(event) => setContent(event.target.value)}
               className="flex-1 w-full p-3 bg-dark-900 border border-dark-600 rounded-lg text-sm font-mono text-dark-100 focus:outline-none focus:border-primary-500 resize-none"
               spellCheck={false}
             />

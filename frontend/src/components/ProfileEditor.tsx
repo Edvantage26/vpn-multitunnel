@@ -115,7 +115,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
       ...editedProfile,
       dns: {
         ...editedProfile.dns,
-        domains: editedProfile.dns.domains.filter(d => d !== domain)
+        domains: editedProfile.dns.domains.filter(domain_value => domain_value !== domain)
       }
     })
   }
@@ -136,7 +136,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
     if (domain) {
       const newDomains = [...editedProfile.dns.domains]
       // Check if domain already exists (excluding current position)
-      const existsElsewhere = newDomains.some((d, i) => i !== editingDomainIndex && d === domain)
+      const existsElsewhere = newDomains.some((domain_value, domain_index) => domain_index !== editingDomainIndex && domain_value === domain)
       if (!existsElsewhere) {
         newDomains[editingDomainIndex] = domain
         setEditedProfile({
@@ -188,7 +188,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                 <input
                   type="text"
                   value={editedProfile.name}
-                  onChange={(e) => setEditedProfile({ ...editedProfile, name: e.target.value })}
+                  onChange={(event) => setEditedProfile({ ...editedProfile, name: event.target.value })}
                   className="w-full input"
                 />
               </div>
@@ -197,7 +197,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                   type="checkbox"
                   id="enabled"
                   checked={editedProfile.enabled}
-                  onChange={(e) => setEditedProfile({ ...editedProfile, enabled: e.target.checked })}
+                  onChange={(event) => setEditedProfile({ ...editedProfile, enabled: event.target.checked })}
                   className="rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"
                 />
                 <label htmlFor="enabled" className="text-sm text-dark-300">
@@ -218,9 +218,9 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                   type="checkbox"
                   id="healthEnabled"
                   checked={editedProfile.healthCheck.enabled}
-                  onChange={(e) => setEditedProfile({
+                  onChange={(event) => setEditedProfile({
                     ...editedProfile,
-                    healthCheck: { ...editedProfile.healthCheck, enabled: e.target.checked }
+                    healthCheck: { ...editedProfile.healthCheck, enabled: event.target.checked }
                   })}
                   className="rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"
                 />
@@ -237,9 +237,9 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                     <input
                       type="text"
                       value={editedProfile.healthCheck.targetIP}
-                      onChange={(e) => setEditedProfile({
+                      onChange={(event) => setEditedProfile({
                         ...editedProfile,
-                        healthCheck: { ...editedProfile.healthCheck, targetIP: e.target.value }
+                        healthCheck: { ...editedProfile.healthCheck, targetIP: event.target.value }
                       })}
                       placeholder="e.g., 10.0.0.1"
                       className="w-full input"
@@ -252,9 +252,9 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                     <input
                       type="number"
                       value={editedProfile.healthCheck.intervalSeconds}
-                      onChange={(e) => setEditedProfile({
+                      onChange={(event) => setEditedProfile({
                         ...editedProfile,
-                        healthCheck: { ...editedProfile.healthCheck, intervalSeconds: parseInt(e.target.value) || 30 }
+                        healthCheck: { ...editedProfile.healthCheck, intervalSeconds: parseInt(event.target.value) || 30 }
                       })}
                       className="w-full input"
                       min="5"
@@ -279,9 +279,9 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                 <input
                   type="text"
                   value={editedProfile.dns.server}
-                  onChange={(e) => setEditedProfile({
+                  onChange={(event) => setEditedProfile({
                     ...editedProfile,
-                    dns: { ...editedProfile.dns, server: e.target.value }
+                    dns: { ...editedProfile.dns, server: event.target.value }
                   })}
                   placeholder="e.g., 172.23.0.53"
                   className="w-full input"
@@ -310,15 +310,15 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                           <input
                             type="text"
                             value={editingDomainValue}
-                            onChange={(e) => setEditingDomainValue(e.target.value)}
-                            onKeyPress={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault()
+                            onChange={(event) => setEditingDomainValue(event.target.value)}
+                            onKeyPress={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
                                 handleSaveEditDomain()
                               }
                             }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Escape') {
+                            onKeyDown={(event) => {
+                              if (event.key === 'Escape') {
                                 handleCancelEditDomain()
                               }
                             }}
@@ -353,8 +353,8 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                         >
                           .{domain}
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation()
+                            onClick={(event) => {
+                              event.stopPropagation()
                               handleRemoveDomain(domain)
                             }}
                             className="text-dark-400 hover:text-red-400 transition-colors"
@@ -374,8 +374,8 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                   <input
                     type="text"
                     value={newDomain}
-                    onChange={(e) => setNewDomain(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddDomain())}
+                    onChange={(event) => setNewDomain(event.target.value)}
+                    onKeyPress={(event) => event.key === 'Enter' && (event.preventDefault(), handleAddDomain())}
                     placeholder="Add suffix (e.g., office)"
                     className="flex-1 input"
                   />
@@ -394,9 +394,9 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                     type="checkbox"
                     id="stripSuffix"
                     checked={editedProfile.dns.stripSuffix}
-                    onChange={(e) => setEditedProfile({
+                    onChange={(event) => setEditedProfile({
                       ...editedProfile,
-                      dns: { ...editedProfile.dns, stripSuffix: e.target.checked }
+                      dns: { ...editedProfile.dns, stripSuffix: event.target.checked }
                     })}
                     className="rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"
                   />
@@ -504,7 +504,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                     )}
                     <textarea
                       value={configContent}
-                      onChange={(e) => setConfigContent(e.target.value)}
+                      onChange={(event) => setConfigContent(event.target.value)}
                       className="w-full h-64 p-2 bg-dark-800 border border-dark-600 rounded text-xs font-mono text-dark-100 focus:outline-none focus:border-primary-500 resize-y"
                       spellCheck={false}
                     />

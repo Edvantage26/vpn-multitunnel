@@ -61,32 +61,32 @@ func NewLogger(bufferSize int) *Logger {
 }
 
 // SetMinLevel sets the minimum log level to record
-func (l *Logger) SetMinLevel(level LogLevel) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.minLevel = level
+func (logger *Logger) SetMinLevel(level LogLevel) {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	logger.minLevel = level
 }
 
 // SetEnabled enables or disables logging
-func (l *Logger) SetEnabled(enabled bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.enabled = enabled
+func (logger *Logger) SetEnabled(enabled bool) {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	logger.enabled = enabled
 }
 
 // AddListener adds a listener that will be called for each log entry
-func (l *Logger) AddListener(listener func(LogEntry)) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.listeners = append(l.listeners, listener)
+func (logger *Logger) AddListener(listener func(LogEntry)) {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	logger.listeners = append(logger.listeners, listener)
 }
 
 // shouldLog returns true if the level should be logged
-func (l *Logger) shouldLog(level LogLevel) bool {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
+func (logger *Logger) shouldLog(level LogLevel) bool {
+	logger.mu.RLock()
+	defer logger.mu.RUnlock()
 
-	if !l.enabled {
+	if !logger.enabled {
 		return false
 	}
 
@@ -97,12 +97,12 @@ func (l *Logger) shouldLog(level LogLevel) bool {
 		LevelError: 3,
 	}
 
-	return levels[level] >= levels[l.minLevel]
+	return levels[level] >= levels[logger.minLevel]
 }
 
 // log records a log entry
-func (l *Logger) log(level LogLevel, component, profileID, message string, fields map[string]any) {
-	if !l.shouldLog(level) {
+func (logger *Logger) log(level LogLevel, component, profileID, message string, fields map[string]any) {
+	if !logger.shouldLog(level) {
 		return
 	}
 
@@ -115,7 +115,7 @@ func (l *Logger) log(level LogLevel, component, profileID, message string, field
 		Fields:    fields,
 	}
 
-	l.buffer.Add(entry)
+	logger.buffer.Add(entry)
 
 	// Also log to standard logger for console output
 	if level == LevelError || level == LevelWarn {
@@ -123,9 +123,9 @@ func (l *Logger) log(level LogLevel, component, profileID, message string, field
 	}
 
 	// Notify listeners
-	l.mu.RLock()
-	listeners := l.listeners
-	l.mu.RUnlock()
+	logger.mu.RLock()
+	listeners := logger.listeners
+	logger.mu.RUnlock()
 
 	for _, listener := range listeners {
 		listener(entry)
@@ -133,52 +133,52 @@ func (l *Logger) log(level LogLevel, component, profileID, message string, field
 }
 
 // Debug logs a debug message
-func (l *Logger) Debug(component, message string, fields map[string]any) {
-	l.log(LevelDebug, component, "", message, fields)
+func (logger *Logger) Debug(component, message string, fields map[string]any) {
+	logger.log(LevelDebug, component, "", message, fields)
 }
 
 // DebugProfile logs a debug message for a specific profile
-func (l *Logger) DebugProfile(component, profileID, message string, fields map[string]any) {
-	l.log(LevelDebug, component, profileID, message, fields)
+func (logger *Logger) DebugProfile(component, profileID, message string, fields map[string]any) {
+	logger.log(LevelDebug, component, profileID, message, fields)
 }
 
 // Info logs an info message
-func (l *Logger) Info(component, message string, fields map[string]any) {
-	l.log(LevelInfo, component, "", message, fields)
+func (logger *Logger) Info(component, message string, fields map[string]any) {
+	logger.log(LevelInfo, component, "", message, fields)
 }
 
 // InfoProfile logs an info message for a specific profile
-func (l *Logger) InfoProfile(component, profileID, message string, fields map[string]any) {
-	l.log(LevelInfo, component, profileID, message, fields)
+func (logger *Logger) InfoProfile(component, profileID, message string, fields map[string]any) {
+	logger.log(LevelInfo, component, profileID, message, fields)
 }
 
 // Warn logs a warning message
-func (l *Logger) Warn(component, message string, fields map[string]any) {
-	l.log(LevelWarn, component, "", message, fields)
+func (logger *Logger) Warn(component, message string, fields map[string]any) {
+	logger.log(LevelWarn, component, "", message, fields)
 }
 
 // WarnProfile logs a warning message for a specific profile
-func (l *Logger) WarnProfile(component, profileID, message string, fields map[string]any) {
-	l.log(LevelWarn, component, profileID, message, fields)
+func (logger *Logger) WarnProfile(component, profileID, message string, fields map[string]any) {
+	logger.log(LevelWarn, component, profileID, message, fields)
 }
 
 // Error logs an error message
-func (l *Logger) Error(component, message string, fields map[string]any) {
-	l.log(LevelError, component, "", message, fields)
+func (logger *Logger) Error(component, message string, fields map[string]any) {
+	logger.log(LevelError, component, "", message, fields)
 }
 
 // ErrorProfile logs an error message for a specific profile
-func (l *Logger) ErrorProfile(component, profileID, message string, fields map[string]any) {
-	l.log(LevelError, component, profileID, message, fields)
+func (logger *Logger) ErrorProfile(component, profileID, message string, fields map[string]any) {
+	logger.log(LevelError, component, profileID, message, fields)
 }
 
 // GetLogs returns the most recent log entries
-func (l *Logger) GetLogs(limit int) []LogEntry {
-	return l.buffer.GetLast(limit)
+func (logger *Logger) GetLogs(limit int) []LogEntry {
+	return logger.buffer.GetLast(limit)
 }
 
 // GetLogsFiltered returns filtered log entries
-func (l *Logger) GetLogsFiltered(level LogLevel, component, profileID string, limit int) []LogEntry {
+func (logger *Logger) GetLogsFiltered(level LogLevel, component, profileID string, limit int) []LogEntry {
 	filter := func(entry LogEntry) bool {
 		if level != "" && entry.Level != level {
 			return false
@@ -192,12 +192,12 @@ func (l *Logger) GetLogsFiltered(level LogLevel, component, profileID string, li
 		return true
 	}
 
-	return l.buffer.GetFiltered(filter, limit)
+	return logger.buffer.GetFiltered(filter, limit)
 }
 
 // GetLogsJSON returns logs as a JSON string
-func (l *Logger) GetLogsJSON(limit int) (string, error) {
-	logs := l.GetLogs(limit)
+func (logger *Logger) GetLogsJSON(limit int) (string, error) {
+	logs := logger.GetLogs(limit)
 	data, err := json.Marshal(logs)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal logs: %w", err)
@@ -206,13 +206,13 @@ func (l *Logger) GetLogsJSON(limit int) (string, error) {
 }
 
 // Clear removes all log entries
-func (l *Logger) Clear() {
-	l.buffer.Clear()
+func (logger *Logger) Clear() {
+	logger.buffer.Clear()
 }
 
 // Count returns the number of log entries
-func (l *Logger) Count() int {
-	return l.buffer.Count()
+func (logger *Logger) Count() int {
+	return logger.buffer.Count()
 }
 
 // Convenience functions for global logger

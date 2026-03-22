@@ -23,11 +23,11 @@ func NewClient() *Client {
 }
 
 // Connect connects to the service
-func (c *Client) Connect() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (ipc_client *Client) Connect() error {
+	ipc_client.mu.Lock()
+	defer ipc_client.mu.Unlock()
 
-	if c.conn != nil {
+	if ipc_client.conn != nil {
 		return nil // Already connected
 	}
 
@@ -37,42 +37,42 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to connect to service: %w", err)
 	}
 
-	c.conn = conn
+	ipc_client.conn = conn
 	return nil
 }
 
 // Close closes the connection
-func (c *Client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (ipc_client *Client) Close() error {
+	ipc_client.mu.Lock()
+	defer ipc_client.mu.Unlock()
 
-	if c.conn != nil {
-		err := c.conn.Close()
-		c.conn = nil
+	if ipc_client.conn != nil {
+		err := ipc_client.conn.Close()
+		ipc_client.conn = nil
 		return err
 	}
 	return nil
 }
 
 // IsConnected returns true if connected to the service
-func (c *Client) IsConnected() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.conn != nil
+func (ipc_client *Client) IsConnected() bool {
+	ipc_client.mu.Lock()
+	defer ipc_client.mu.Unlock()
+	return ipc_client.conn != nil
 }
 
 // Send sends a request and waits for a response
-func (c *Client) Send(req *Request) (*Response, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (ipc_client *Client) Send(req *Request) (*Response, error) {
+	ipc_client.mu.Lock()
+	defer ipc_client.mu.Unlock()
 
-	if c.conn == nil {
+	if ipc_client.conn == nil {
 		return nil, fmt.Errorf("not connected to service")
 	}
 
 	// Set deadline for the entire operation
-	c.conn.SetDeadline(time.Now().Add(30 * time.Second))
-	defer c.conn.SetDeadline(time.Time{})
+	ipc_client.conn.SetDeadline(time.Now().Add(30 * time.Second))
+	defer ipc_client.conn.SetDeadline(time.Time{})
 
 	// Encode request
 	data, err := req.Encode()
@@ -83,40 +83,40 @@ func (c *Client) Send(req *Request) (*Response, error) {
 	// Write message length
 	lenBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lenBuf, uint32(len(data)))
-	if _, err := c.conn.Write(lenBuf); err != nil {
-		c.conn.Close()
-		c.conn = nil
+	if _, err := ipc_client.conn.Write(lenBuf); err != nil {
+		ipc_client.conn.Close()
+		ipc_client.conn = nil
 		return nil, fmt.Errorf("failed to write message length: %w", err)
 	}
 
 	// Write message body
-	if _, err := c.conn.Write(data); err != nil {
-		c.conn.Close()
-		c.conn = nil
+	if _, err := ipc_client.conn.Write(data); err != nil {
+		ipc_client.conn.Close()
+		ipc_client.conn = nil
 		return nil, fmt.Errorf("failed to write message body: %w", err)
 	}
 
 	// Read response length
-	_, err = io.ReadFull(c.conn, lenBuf)
+	_, err = io.ReadFull(ipc_client.conn, lenBuf)
 	if err != nil {
-		c.conn.Close()
-		c.conn = nil
+		ipc_client.conn.Close()
+		ipc_client.conn = nil
 		return nil, fmt.Errorf("failed to read response length: %w", err)
 	}
 
 	respLen := binary.BigEndian.Uint32(lenBuf)
 	if respLen > 1024*1024 { // Max 1MB message
-		c.conn.Close()
-		c.conn = nil
+		ipc_client.conn.Close()
+		ipc_client.conn = nil
 		return nil, fmt.Errorf("response too large: %d bytes", respLen)
 	}
 
 	// Read response body
 	respBuf := make([]byte, respLen)
-	_, err = io.ReadFull(c.conn, respBuf)
+	_, err = io.ReadFull(ipc_client.conn, respBuf)
 	if err != nil {
-		c.conn.Close()
-		c.conn = nil
+		ipc_client.conn.Close()
+		ipc_client.conn = nil
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
@@ -130,9 +130,9 @@ func (c *Client) Send(req *Request) (*Response, error) {
 }
 
 // Ping checks if the service is responding
-func (c *Client) Ping() error {
+func (ipc_client *Client) Ping() error {
 	req := NewRequest(OpPing)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -143,9 +143,9 @@ func (c *Client) Ping() error {
 }
 
 // AddLoopbackIP requests the service to add a loopback IP
-func (c *Client) AddLoopbackIP(ip string) error {
+func (ipc_client *Client) AddLoopbackIP(ip string) error {
 	req := NewRequest(OpAddLoopbackIP).SetParam("ip", ip)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -156,9 +156,9 @@ func (c *Client) AddLoopbackIP(ip string) error {
 }
 
 // RemoveLoopbackIP requests the service to remove a loopback IP
-func (c *Client) RemoveLoopbackIP(ip string) error {
+func (ipc_client *Client) RemoveLoopbackIP(ip string) error {
 	req := NewRequest(OpRemoveLoopbackIP).SetParam("ip", ip)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -169,9 +169,9 @@ func (c *Client) RemoveLoopbackIP(ip string) error {
 }
 
 // EnsureLoopbackIPs requests the service to ensure multiple loopback IPs exist
-func (c *Client) EnsureLoopbackIPs(ips []string) error {
+func (ipc_client *Client) EnsureLoopbackIPs(ips []string) error {
 	req := NewRequest(OpEnsureLoopbackIPs).SetParam("ips", ips)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -182,11 +182,11 @@ func (c *Client) EnsureLoopbackIPs(ips []string) error {
 }
 
 // SetDNS requests the service to set DNS servers for an interface
-func (c *Client) SetDNS(interfaceName string, dnsServers []string) error {
+func (ipc_client *Client) SetDNS(interfaceName string, dnsServers []string) error {
 	req := NewRequest(OpSetDNS).
 		SetParam("interface", interfaceName).
 		SetParam("servers", dnsServers)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -197,11 +197,11 @@ func (c *Client) SetDNS(interfaceName string, dnsServers []string) error {
 }
 
 // SetDNSv6 requests the service to set IPv6 DNS servers for an interface
-func (c *Client) SetDNSv6(interfaceName string, dnsServers []string) error {
+func (ipc_client *Client) SetDNSv6(interfaceName string, dnsServers []string) error {
 	req := NewRequest(OpSetDNSv6).
 		SetParam("interface", interfaceName).
 		SetParam("servers", dnsServers)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -212,9 +212,9 @@ func (c *Client) SetDNSv6(interfaceName string, dnsServers []string) error {
 }
 
 // ResetDNS requests the service to reset DNS to DHCP
-func (c *Client) ResetDNS(interfaceName string) error {
+func (ipc_client *Client) ResetDNS(interfaceName string) error {
 	req := NewRequest(OpResetDNS).SetParam("interface", interfaceName)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -225,9 +225,9 @@ func (c *Client) ResetDNS(interfaceName string) error {
 }
 
 // ConfigureSystemDNS requests the service to configure system DNS for transparent proxy
-func (c *Client) ConfigureSystemDNS(dnsAddress string) error {
+func (ipc_client *Client) ConfigureSystemDNS(dnsAddress string) error {
 	req := NewRequest(OpConfigureSystemDNS).SetParam("address", dnsAddress)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -238,9 +238,9 @@ func (c *Client) ConfigureSystemDNS(dnsAddress string) error {
 }
 
 // RestoreSystemDNS requests the service to restore original DNS configuration
-func (c *Client) RestoreSystemDNS() error {
+func (ipc_client *Client) RestoreSystemDNS() error {
 	req := NewRequest(OpRestoreSystemDNS)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -251,9 +251,9 @@ func (c *Client) RestoreSystemDNS() error {
 }
 
 // StopDNSClient requests the service to stop the DNS Client service
-func (c *Client) StopDNSClient() error {
+func (ipc_client *Client) StopDNSClient() error {
 	req := NewRequest(OpStopDNSClient)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}
@@ -264,9 +264,9 @@ func (c *Client) StopDNSClient() error {
 }
 
 // StartDNSClient requests the service to start the DNS Client service
-func (c *Client) StartDNSClient() error {
+func (ipc_client *Client) StartDNSClient() error {
 	req := NewRequest(OpStartDNSClient)
-	resp, err := c.Send(req)
+	resp, err := ipc_client.Send(req)
 	if err != nil {
 		return err
 	}

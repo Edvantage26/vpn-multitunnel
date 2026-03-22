@@ -170,28 +170,28 @@ func configureDevice(dev *device.Device, wgConfig *config.WireGuardConfig) error
 }
 
 // Close shuts down the tunnel
-func (t *Tunnel) Close() error {
-	t.Stats.Connected = false
-	if t.Device != nil {
-		t.Device.Close()
+func (tunnel *Tunnel) Close() error {
+	tunnel.Stats.Connected = false
+	if tunnel.Device != nil {
+		tunnel.Device.Close()
 	}
 	return nil
 }
 
 // DialTCP creates a TCP connection through the tunnel
-func (t *Tunnel) DialTCP(addr string) (net.Conn, error) {
-	return t.Net.DialContextTCPAddrPort(nil, netip.MustParseAddrPort(addr))
+func (tunnel *Tunnel) DialTCP(addr string) (net.Conn, error) {
+	return tunnel.Net.DialContextTCPAddrPort(nil, netip.MustParseAddrPort(addr))
 }
 
 // DialUDP creates a UDP connection through the tunnel
-func (t *Tunnel) DialUDP(addr string) (net.Conn, error) {
-	return t.Net.DialUDPAddrPort(netip.AddrPort{}, netip.MustParseAddrPort(addr))
+func (tunnel *Tunnel) DialUDP(addr string) (net.Conn, error) {
+	return tunnel.Net.DialUDPAddrPort(netip.AddrPort{}, netip.MustParseAddrPort(addr))
 }
 
 // Dial creates a connection through the tunnel
 // DNS resolution happens through the tunnel's configured DNS servers
-func (t *Tunnel) Dial(network, addr string) (net.Conn, error) {
-	if t.Net == nil {
+func (tunnel *Tunnel) Dial(network, addr string) (net.Conn, error) {
+	if tunnel.Net == nil {
 		return nil, fmt.Errorf("tunnel not initialized")
 	}
 
@@ -200,17 +200,17 @@ func (t *Tunnel) Dial(network, addr string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	return t.Net.DialContext(ctx, network, addr)
+	return tunnel.Net.DialContext(ctx, network, addr)
 }
 
 // UpdateStats updates tunnel statistics from the device
-func (t *Tunnel) UpdateStats() {
-	if t.Device == nil {
+func (tunnel *Tunnel) UpdateStats() {
+	if tunnel.Device == nil {
 		return
 	}
 
 	// Get device status via IPC
-	stats, err := t.Device.IpcGet()
+	stats, err := tunnel.Device.IpcGet()
 	if err != nil {
 		return
 	}
@@ -226,31 +226,31 @@ func (t *Tunnel) UpdateStats() {
 
 		switch key {
 		case "tx_bytes":
-			fmt.Sscanf(value, "%d", &t.Stats.BytesSent)
+			fmt.Sscanf(value, "%d", &tunnel.Stats.BytesSent)
 		case "rx_bytes":
-			fmt.Sscanf(value, "%d", &t.Stats.BytesRecv)
+			fmt.Sscanf(value, "%d", &tunnel.Stats.BytesRecv)
 		case "last_handshake_time_sec":
 			var timestamp int64
 			fmt.Sscanf(value, "%d", &timestamp)
 			if timestamp > 0 {
-				t.Stats.LastHandshake = fmt.Sprintf("%d", timestamp)
+				tunnel.Stats.LastHandshake = fmt.Sprintf("%d", timestamp)
 			}
 		}
 	}
 }
 
 // GetNet returns the netstack.Net for this tunnel
-func (t *Tunnel) GetNet() *netstack.Net {
-	return t.Net
+func (tunnel *Tunnel) GetNet() *netstack.Net {
+	return tunnel.Net
 }
 
 // GetDebugInfo returns detailed debug information about the tunnel
-func (t *Tunnel) GetDebugInfo() string {
-	if t.Device == nil {
+func (tunnel *Tunnel) GetDebugInfo() string {
+	if tunnel.Device == nil {
 		return "Device is nil"
 	}
 
-	stats, err := t.Device.IpcGet()
+	stats, err := tunnel.Device.IpcGet()
 	if err != nil {
 		return fmt.Sprintf("Error getting IPC stats: %v", err)
 	}

@@ -63,26 +63,26 @@ func NewTCPProxy(cfg *config.TCPProxy, tunnelGetter TunnelGetter, hostMapping *H
 }
 
 // getPortsForProfile returns the TCP proxy ports for a given profile
-func (tcpProxy *TCPProxy) getPortsForProfile(profileID string) []int {
-	if ports, exists := tcpProxy.portsForProfile[profileID]; exists {
+func (tcp_proxy *TCPProxy) getPortsForProfile(profileID string) []int {
+	if ports, exists := tcp_proxy.portsForProfile[profileID]; exists {
 		return ports
 	}
 	return nil
 }
 
 // Start starts the TCP proxy, listening on all configured IPs and ports
-func (t *TCPProxy) Start() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+func (tcp_proxy *TCPProxy) Start() error {
+	tcp_proxy.mu.Lock()
+	defer tcp_proxy.mu.Unlock()
 
-	if !t.config.Enabled {
+	if !tcp_proxy.config.Enabled {
 		log.Printf("TCP proxy is disabled")
 		return nil
 	}
 
 	// For each tunnel IP, listen on its configured ports (per-profile or global fallback)
-	for profileID, tunnelIP := range t.config.TunnelIPs {
-		for _, port := range t.getPortsForProfile(profileID) {
+	for profileID, tunnelIP := range tcp_proxy.config.TunnelIPs {
+		for _, port := range tcp_proxy.getPortsForProfile(profileID) {
 			addr := fmt.Sprintf("%s:%d", tunnelIP, port)
 
 			listener, err := net.Listen("tcp", addr)
@@ -97,42 +97,42 @@ func (t *TCPProxy) Start() error {
 				continue
 			}
 
-			t.listeners[addr] = listener
-			t.wg.Add(1)
-			go t.acceptLoop(listener, profileID, tunnelIP, port)
+			tcp_proxy.listeners[addr] = listener
+			tcp_proxy.wg.Add(1)
+			go tcp_proxy.acceptLoop(listener, profileID, tunnelIP, port)
 		}
 	}
 
-	if len(t.listeners) > 0 {
-		log.Printf("TCP proxy started with %d listeners", len(t.listeners))
+	if len(tcp_proxy.listeners) > 0 {
+		log.Printf("TCP proxy started with %d listeners", len(tcp_proxy.listeners))
 	}
 
 	return nil
 }
 
 // Stop stops the TCP proxy
-func (t *TCPProxy) Stop() {
-	t.cancel()
+func (tcp_proxy *TCPProxy) Stop() {
+	tcp_proxy.cancel()
 
-	t.mu.Lock()
-	for addr, listener := range t.listeners {
+	tcp_proxy.mu.Lock()
+	for addr, listener := range tcp_proxy.listeners {
 		listener.Close()
-		delete(t.listeners, addr)
+		delete(tcp_proxy.listeners, addr)
 	}
-	t.mu.Unlock()
+	tcp_proxy.mu.Unlock()
 
-	t.wg.Wait()
+	tcp_proxy.wg.Wait()
 	log.Printf("TCP proxy stopped")
 }
 
-func (t *TCPProxy) acceptLoop(listener net.Listener, profileID string, tunnelIP string, port int) {
-	defer t.wg.Done()
+func (tcp_proxy *TCPProxy) acceptLoop(listener net.Listener, profileID string, tunnelIP string, port int) {
+	defer tcp_proxy.wg.Done()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			select {
-			case <-t.ctx.Done():
+			case <-tcp_proxy.ctx.Done():
 				return
 			default:
 				if !strings.Contains(err.Error(), "use of closed network connection") {
@@ -142,22 +142,22 @@ func (t *TCPProxy) acceptLoop(listener net.Listener, profileID string, tunnelIP 
 			}
 		}
 
-		go t.handleConnection(conn, profileID, tunnelIP, port)
+		go tcp_proxy.handleConnection(conn, profileID, tunnelIP, port)
 	}
 }
 
-func (t *TCPProxy) handleConnection(conn net.Conn, profileID string, tunnelIP string, port int) {
+func (tcp_proxy *TCPProxy) handleConnection(conn net.Conn, profileID string, tunnelIP string, port int) {
 	defer conn.Close()
 
 	// Get the tunnel for this profile
-	tunnel := t.tunnelGetter(profileID)
+	tunnel := tcp_proxy.tunnelGetter(profileID)
 	if tunnel == nil {
 		log.Printf("TCP proxy: tunnel not connected for profile %s", profileID)
 		return
 	}
 
 	// Look up the host mapping to find the real destination
-	mapping := t.hostMapping.GetByTunnelIP(tunnelIP)
+	mapping := tcp_proxy.hostMapping.GetByTunnelIP(tunnelIP)
 	if mapping == nil {
 		log.Printf("TCP proxy: no host mapping found for tunnel IP %s", tunnelIP)
 		return
@@ -176,11 +176,11 @@ func (t *TCPProxy) handleConnection(conn net.Conn, profileID string, tunnelIP st
 		conn.RemoteAddr(), tunnelIP, port, profileID, realAddr)
 
 	// Bidirectional relay
-	t.relay(conn, remote)
+	tcp_proxy.relay(conn, remote)
 }
 
-func (t *TCPProxy) relay(local, remote net.Conn) {
-	ctx, cancel := context.WithCancel(t.ctx)
+func (tcp_proxy *TCPProxy) relay(local, remote net.Conn) {
+	ctx, cancel := context.WithCancel(tcp_proxy.ctx)
 	defer cancel()
 
 	// Local to remote
@@ -199,28 +199,28 @@ func (t *TCPProxy) relay(local, remote net.Conn) {
 }
 
 // UpdateConfig updates the TCP proxy configuration
-func (tcpProxy *TCPProxy) UpdateConfig(cfg *config.TCPProxy, profilePorts map[string][]int) {
-	tcpProxy.Stop()
+func (tcp_proxy *TCPProxy) UpdateConfig(cfg *config.TCPProxy, profilePorts map[string][]int) {
+	tcp_proxy.Stop()
 
-	tcpProxy.mu.Lock()
-	tcpProxy.config = cfg
-	tcpProxy.portsForProfile = profilePorts
+	tcp_proxy.mu.Lock()
+	tcp_proxy.config = cfg
+	tcp_proxy.portsForProfile = profilePorts
 
 	// Rebuild reverse mapping
-	tcpProxy.profileForIP = make(map[string]string)
+	tcp_proxy.profileForIP = make(map[string]string)
 	for profileID, tunnelIP := range cfg.TunnelIPs {
-		tcpProxy.profileForIP[tunnelIP] = profileID
+		tcp_proxy.profileForIP[tunnelIP] = profileID
 	}
 
-	tcpProxy.ctx, tcpProxy.cancel = context.WithCancel(context.Background())
-	tcpProxy.mu.Unlock()
+	tcp_proxy.ctx, tcp_proxy.cancel = context.WithCancel(context.Background())
+	tcp_proxy.mu.Unlock()
 
-	tcpProxy.Start()
+	tcp_proxy.Start()
 }
 
 // GetActiveConnections returns information about current mappings
-func (t *TCPProxy) GetActiveConnections() []ActiveConnection {
-	mappings := t.hostMapping.GetAllActive()
+func (tcp_proxy *TCPProxy) GetActiveConnections() []ActiveConnection {
+	mappings := tcp_proxy.hostMapping.GetAllActive()
 	result := make([]ActiveConnection, len(mappings))
 
 	for idx_mapping, host_mapping := range mappings {
@@ -246,27 +246,27 @@ type ActiveConnection struct {
 }
 
 // GetListenerCount returns the number of active listeners
-func (t *TCPProxy) GetListenerCount() int {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return len(t.listeners)
+func (tcp_proxy *TCPProxy) GetListenerCount() int {
+	tcp_proxy.mu.RLock()
+	defer tcp_proxy.mu.RUnlock()
+	return len(tcp_proxy.listeners)
 }
 
 // AddListenerForIP dynamically adds listeners for a new IP address
 // This is called by DNS proxy when a new hostname gets a unique IP assigned
-func (t *TCPProxy) AddListenerForIP(ip string, profileID string) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+func (tcp_proxy *TCPProxy) AddListenerForIP(ip string, profileID string) error {
+	tcp_proxy.mu.Lock()
+	defer tcp_proxy.mu.Unlock()
 
 	// Register this IP for the profile
-	t.profileForIP[ip] = profileID
+	tcp_proxy.profileForIP[ip] = profileID
 
 	// Start listeners for profile-specific ports on this IP (or global fallback)
-	for _, port := range t.getPortsForProfile(profileID) {
+	for _, port := range tcp_proxy.getPortsForProfile(profileID) {
 		addr := fmt.Sprintf("%s:%d", ip, port)
 
 		// Skip if already listening
-		if _, exists := t.listeners[addr]; exists {
+		if _, exists := tcp_proxy.listeners[addr]; exists {
 			continue
 		}
 
@@ -281,9 +281,9 @@ func (t *TCPProxy) AddListenerForIP(ip string, profileID string) error {
 			continue
 		}
 
-		t.listeners[addr] = listener
-		t.wg.Add(1)
-		go t.acceptLoop(listener, profileID, ip, port)
+		tcp_proxy.listeners[addr] = listener
+		tcp_proxy.wg.Add(1)
+		go tcp_proxy.acceptLoop(listener, profileID, ip, port)
 		log.Printf("TCP proxy: added listener on %s", addr)
 	}
 
@@ -291,10 +291,10 @@ func (t *TCPProxy) AddListenerForIP(ip string, profileID string) error {
 }
 
 // IsListening checks if a specific address is being listened on
-func (t *TCPProxy) IsListening(ip string, port int) bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+func (tcp_proxy *TCPProxy) IsListening(ip string, port int) bool {
+	tcp_proxy.mu.RLock()
+	defer tcp_proxy.mu.RUnlock()
 	addr := fmt.Sprintf("%s:%d", ip, port)
-	_, exists := t.listeners[addr]
+	_, exists := tcp_proxy.listeners[addr]
 	return exists
 }

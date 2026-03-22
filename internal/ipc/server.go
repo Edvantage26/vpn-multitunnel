@@ -37,7 +37,7 @@ func NewServer(handler RequestHandler) *Server {
 }
 
 // Start starts the IPC server
-func (s *Server) Start() error {
+func (ipc_server *Server) Start() error {
 	// Create a security descriptor that allows local users to connect
 	// SDDL: Allow Generic All to Authenticated Users and Local System
 	cfg := &winio.PipeConfig{
@@ -52,48 +52,48 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to create named pipe: %w", err)
 	}
 
-	s.mu.Lock()
-	s.listener = listener
-	s.mu.Unlock()
+	ipc_server.mu.Lock()
+	ipc_server.listener = listener
+	ipc_server.mu.Unlock()
 
 	log.Printf("IPC server started on %s", PipeName)
 
 	// Accept connections in a goroutine
-	s.wg.Add(1)
-	go s.acceptLoop()
+	ipc_server.wg.Add(1)
+	go ipc_server.acceptLoop()
 
 	return nil
 }
 
 // Stop stops the IPC server
-func (s *Server) Stop() {
-	s.cancel()
+func (ipc_server *Server) Stop() {
+	ipc_server.cancel()
 
-	s.mu.Lock()
-	if s.listener != nil {
-		s.listener.Close()
+	ipc_server.mu.Lock()
+	if ipc_server.listener != nil {
+		ipc_server.listener.Close()
 	}
-	s.mu.Unlock()
+	ipc_server.mu.Unlock()
 
-	s.wg.Wait()
+	ipc_server.wg.Wait()
 	log.Printf("IPC server stopped")
 }
 
 // acceptLoop accepts incoming connections
-func (s *Server) acceptLoop() {
-	defer s.wg.Done()
+func (ipc_server *Server) acceptLoop() {
+	defer ipc_server.wg.Done()
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ipc_server.ctx.Done():
 			return
 		default:
 		}
 
-		conn, err := s.listener.Accept()
+		conn, err := ipc_server.listener.Accept()
 		if err != nil {
 			select {
-			case <-s.ctx.Done():
+			case <-ipc_server.ctx.Done():
 				return
 			default:
 				log.Printf("Failed to accept connection: %v", err)
@@ -101,21 +101,21 @@ func (s *Server) acceptLoop() {
 			}
 		}
 
-		s.wg.Add(1)
-		go s.handleConnection(conn)
+		ipc_server.wg.Add(1)
+		go ipc_server.handleConnection(conn)
 	}
 }
 
 // handleConnection handles a single client connection
-func (s *Server) handleConnection(conn net.Conn) {
-	defer s.wg.Done()
+func (ipc_server *Server) handleConnection(conn net.Conn) {
+	defer ipc_server.wg.Done()
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
 
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-ipc_server.ctx.Done():
 			return
 		default:
 		}
@@ -148,17 +148,17 @@ func (s *Server) handleConnection(conn net.Conn) {
 		req, err := DecodeRequest(msgBuf)
 		if err != nil {
 			log.Printf("Failed to decode request: %v", err)
-			s.sendResponse(conn, ErrorResponse(err))
+			ipc_server.sendResponse(conn, ErrorResponse(err))
 			continue
 		}
 
 		log.Printf("Received request: %s", req.Operation)
 
 		// Handle request
-		resp := s.handler(req)
+		resp := ipc_server.handler(req)
 
 		// Send response
-		if err := s.sendResponse(conn, resp); err != nil {
+		if err := ipc_server.sendResponse(conn, resp); err != nil {
 			log.Printf("Failed to send response: %v", err)
 			return
 		}
@@ -166,7 +166,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 }
 
 // sendResponse sends a response to the client
-func (s *Server) sendResponse(conn net.Conn, resp *Response) error {
+func (ipc_server *Server) sendResponse(conn net.Conn, resp *Response) error {
 	data, err := resp.Encode()
 	if err != nil {
 		return fmt.Errorf("failed to encode response: %w", err)

@@ -169,7 +169,7 @@ func uninstallService() error {
 			log.Printf("Warning: failed to stop service: %v", err)
 		} else {
 			// Wait for service to stop
-			for i := 0; i < 10; i++ {
+			for retry_attempt := 0; retry_attempt < 10; retry_attempt++ {
 				time.Sleep(500 * time.Millisecond)
 				status, err = s.Query()
 				if err != nil || status.State == svc.Stopped {

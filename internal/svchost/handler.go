@@ -29,7 +29,7 @@ func NewServiceHandler() *ServiceHandler {
 }
 
 // handleRequest handles incoming IPC requests
-func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
+func (service_handler *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 	log.Printf("Handling request: %s", req.Operation)
 
 	switch req.Operation {
@@ -41,7 +41,7 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 		if err != nil {
 			return ipc.ErrorResponse(err)
 		}
-		if err := h.ops.AddLoopbackIP(ip); err != nil {
+		if err := service_handler.ops.AddLoopbackIP(ip); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
@@ -51,7 +51,7 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 		if err != nil {
 			return ipc.ErrorResponse(err)
 		}
-		if err := h.ops.RemoveLoopbackIP(ip); err != nil {
+		if err := service_handler.ops.RemoveLoopbackIP(ip); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
@@ -61,7 +61,7 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 		if err != nil {
 			return ipc.ErrorResponse(err)
 		}
-		if err := h.ops.EnsureLoopbackIPs(ips); err != nil {
+		if err := service_handler.ops.EnsureLoopbackIPs(ips); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
@@ -75,7 +75,7 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 		if err != nil {
 			return ipc.ErrorResponse(err)
 		}
-		if err := h.ops.SetDNS(iface, servers); err != nil {
+		if err := service_handler.ops.SetDNS(iface, servers); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
@@ -89,7 +89,7 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 		if err != nil {
 			return ipc.ErrorResponse(err)
 		}
-		if err := h.ops.SetDNSv6(iface, servers); err != nil {
+		if err := service_handler.ops.SetDNSv6(iface, servers); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
@@ -99,7 +99,7 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 		if err != nil {
 			return ipc.ErrorResponse(err)
 		}
-		if err := h.ops.ResetDNS(iface); err != nil {
+		if err := service_handler.ops.ResetDNS(iface); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
@@ -109,25 +109,25 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 		if err != nil {
 			return ipc.ErrorResponse(err)
 		}
-		if err := h.ops.ConfigureSystemDNS(addr); err != nil {
+		if err := service_handler.ops.ConfigureSystemDNS(addr); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
 
 	case ipc.OpRestoreSystemDNS:
-		if err := h.ops.RestoreSystemDNS(); err != nil {
+		if err := service_handler.ops.RestoreSystemDNS(); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
 
 	case ipc.OpStopDNSClient:
-		if err := h.ops.StopDNSClient(); err != nil {
+		if err := service_handler.ops.StopDNSClient(); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
 
 	case ipc.OpStartDNSClient:
-		if err := h.ops.StartDNSClient(); err != nil {
+		if err := service_handler.ops.StartDNSClient(); err != nil {
 			return ipc.ErrorResponse(err)
 		}
 		return ipc.SuccessResponse()
@@ -138,13 +138,13 @@ func (h *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Response {
 }
 
 // Execute implements the Windows service handler interface
-func (h *ServiceHandler) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
+func (service_handler *ServiceHandler) Execute(args []string, change_requests <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 
 	changes <- svc.Status{State: svc.StartPending}
 
 	// Start the IPC server
-	if err := h.server.Start(); err != nil {
+	if err := service_handler.server.Start(); err != nil {
 		log.Printf("Failed to start IPC server: %v", err)
 		return false, 1
 	}
@@ -155,17 +155,17 @@ func (h *ServiceHandler) Execute(args []string, r <-chan svc.ChangeRequest, chan
 loop:
 	for {
 		select {
-		case c := <-r:
-			switch c.Cmd {
+		case change_request := <-change_requests:
+			switch change_request.Cmd {
 			case svc.Interrogate:
-				changes <- c.CurrentStatus
+				changes <- change_request.CurrentStatus
 			case svc.Stop, svc.Shutdown:
 				log.Printf("Service received stop/shutdown signal")
 				break loop
 			default:
-				log.Printf("Unexpected control request: %v", c.Cmd)
+				log.Printf("Unexpected control request: %v", change_request.Cmd)
 			}
-		case <-h.stopCh:
+		case <-service_handler.stopCh:
 			break loop
 		}
 	}
@@ -173,20 +173,20 @@ loop:
 	changes <- svc.Status{State: svc.StopPending}
 
 	// Restore DNS before stopping (in case app crashed)
-	if h.ops.IsDNSConfigured() {
+	if service_handler.ops.IsDNSConfigured() {
 		log.Printf("Restoring DNS configuration before shutdown...")
-		if err := h.ops.RestoreSystemDNS(); err != nil {
+		if err := service_handler.ops.RestoreSystemDNS(); err != nil {
 			log.Printf("Failed to restore DNS: %v", err)
 		}
 	}
 
 	// Stop the IPC server
-	h.server.Stop()
+	service_handler.server.Stop()
 
 	return false, 0
 }
 
 // Stop signals the service to stop (for manual stopping)
-func (h *ServiceHandler) Stop() {
-	close(h.stopCh)
+func (service_handler *ServiceHandler) Stop() {
+	close(service_handler.stopCh)
 }

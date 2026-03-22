@@ -281,7 +281,7 @@ function App() {
     }
   }
 
-  const selectedStatus = profiles.find(p => p.id === selectedId)
+  const selectedStatus = profiles.find(profile_status => profile_status.id === selectedId)
 
   if (loading) {
     return (

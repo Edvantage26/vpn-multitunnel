@@ -72,14 +72,14 @@ func validateDNSServer(server string) error {
 }
 
 // IsDNSConfigured returns whether DNS has been configured
-func (o *Operations) IsDNSConfigured() bool {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.dnsConfigured
+func (operations *Operations) IsDNSConfigured() bool {
+	operations.mu.Lock()
+	defer operations.mu.Unlock()
+	return operations.dnsConfigured
 }
 
 // AddLoopbackIP adds a loopback IP address
-func (o *Operations) AddLoopbackIP(ip string) error {
+func (operations *Operations) AddLoopbackIP(ip string) error {
 	if ip == "127.0.0.1" {
 		return nil // Skip default loopback
 	}
@@ -88,11 +88,11 @@ func (o *Operations) AddLoopbackIP(ip string) error {
 		return err
 	}
 
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	operations.mu.Lock()
+	defer operations.mu.Unlock()
 
 	// Check if already configured
-	for _, configured := range o.configuredIPs {
+	for _, configured := range operations.configuredIPs {
 		if configured == ip {
 			log.Printf("Loopback IP %s already configured", ip)
 			return nil
@@ -104,7 +104,7 @@ func (o *Operations) AddLoopbackIP(ip string) error {
 	hideWindow(cmd)
 	if err := cmd.Run(); err == nil {
 		log.Printf("Loopback IP %s already exists", ip)
-		o.configuredIPs = append(o.configuredIPs, ip)
+		operations.configuredIPs = append(operations.configuredIPs, ip)
 		return nil
 	}
 
@@ -117,13 +117,13 @@ func (o *Operations) AddLoopbackIP(ip string) error {
 		return fmt.Errorf("netsh error: %v - %s", err, string(output))
 	}
 
-	o.configuredIPs = append(o.configuredIPs, ip)
+	operations.configuredIPs = append(operations.configuredIPs, ip)
 	log.Printf("Added loopback IP %s", ip)
 	return nil
 }
 
 // RemoveLoopbackIP removes a loopback IP address
-func (o *Operations) RemoveLoopbackIP(ip string) error {
+func (operations *Operations) RemoveLoopbackIP(ip string) error {
 	if ip == "127.0.0.1" {
 		return nil // Never remove default loopback
 	}
@@ -141,25 +141,25 @@ func (o *Operations) RemoveLoopbackIP(ip string) error {
 	}
 
 	// Remove from configured list
-	o.mu.Lock()
+	operations.mu.Lock()
 	var newIPs []string
-	for _, configured := range o.configuredIPs {
+	for _, configured := range operations.configuredIPs {
 		if configured != ip {
 			newIPs = append(newIPs, configured)
 		}
 	}
-	o.configuredIPs = newIPs
-	o.mu.Unlock()
+	operations.configuredIPs = newIPs
+	operations.mu.Unlock()
 
 	log.Printf("Removed loopback IP %s", ip)
 	return nil
 }
 
 // EnsureLoopbackIPs ensures multiple loopback IPs exist
-func (o *Operations) EnsureLoopbackIPs(ips []string) error {
+func (operations *Operations) EnsureLoopbackIPs(ips []string) error {
 	var lastErr error
 	for _, ip := range ips {
-		if err := o.AddLoopbackIP(ip); err != nil {
+		if err := operations.AddLoopbackIP(ip); err != nil {
 			log.Printf("Failed to add loopback IP %s: %v", ip, err)
 			lastErr = err
 		}
@@ -168,7 +168,7 @@ func (o *Operations) EnsureLoopbackIPs(ips []string) error {
 }
 
 // GetActiveNetworkInterface returns the name of the primary network interface
-func (o *Operations) GetActiveNetworkInterface() (string, error) {
+func (operations *Operations) GetActiveNetworkInterface() (string, error) {
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command",
 		"Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Select-Object -ExpandProperty InterfaceAlias | Select-Object -First 1")
 	hideWindow(cmd)
@@ -180,7 +180,7 @@ func (o *Operations) GetActiveNetworkInterface() (string, error) {
 }
 
 // GetCurrentDNS gets the current IPv4 DNS servers for an interface
-func (o *Operations) GetCurrentDNS(interfaceName string) ([]string, error) {
+func (operations *Operations) GetCurrentDNS(interfaceName string) ([]string, error) {
 	if err := validateInterfaceName(interfaceName); err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (o *Operations) GetCurrentDNS(interfaceName string) ([]string, error) {
 }
 
 // GetCurrentDNSv6 gets the current IPv6 DNS servers for an interface
-func (o *Operations) GetCurrentDNSv6(interfaceName string) ([]string, error) {
+func (operations *Operations) GetCurrentDNSv6(interfaceName string) ([]string, error) {
 	if err := validateInterfaceName(interfaceName); err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (o *Operations) GetCurrentDNSv6(interfaceName string) ([]string, error) {
 }
 
 // SetDNS sets the IPv4 DNS servers for an interface
-func (o *Operations) SetDNS(interfaceName string, dnsServers []string) error {
+func (operations *Operations) SetDNS(interfaceName string, dnsServers []string) error {
 	if err := validateInterfaceName(interfaceName); err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func (o *Operations) SetDNS(interfaceName string, dnsServers []string) error {
 }
 
 // SetDNSv6 sets the IPv6 DNS servers for an interface
-func (o *Operations) SetDNSv6(interfaceName string, dnsServers []string) error {
+func (operations *Operations) SetDNSv6(interfaceName string, dnsServers []string) error {
 	if err := validateInterfaceName(interfaceName); err != nil {
 		return err
 	}
@@ -268,7 +268,7 @@ func (o *Operations) SetDNSv6(interfaceName string, dnsServers []string) error {
 }
 
 // ResetDNS resets DNS to automatic (DHCP)
-func (o *Operations) ResetDNS(interfaceName string) error {
+func (operations *Operations) ResetDNS(interfaceName string) error {
 	if err := validateInterfaceName(interfaceName); err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func (o *Operations) ResetDNS(interfaceName string) error {
 
 // ConfigureSystemDNS configures the system to use our DNS proxy
 // Note: Using a loopback IP like 127.0.0.53 avoids conflicts with Windows DNS Client
-func (o *Operations) ConfigureSystemDNS(dnsAddress string) error {
+func (operations *Operations) ConfigureSystemDNS(dnsAddress string) error {
 	if err := validateDNSServer(dnsAddress); err != nil {
 		return err
 	}
@@ -295,131 +295,131 @@ func (o *Operations) ConfigureSystemDNS(dnsAddress string) error {
 	// Do this even if we think DNS is already configured, because the DNS Client
 	// might have been restarted by Windows since the last call
 	log.Printf("Stopping Windows DNS Client service to free port 53...")
-	if err := o.StopDNSClient(); err != nil {
+	if err := operations.StopDNSClient(); err != nil {
 		log.Printf("Warning: could not stop DNS Client service: %v", err)
 		// Continue anyway - maybe it's not running
 	}
 
-	o.mu.Lock()
-	if o.dnsConfigured {
-		o.mu.Unlock()
+	operations.mu.Lock()
+	if operations.dnsConfigured {
+		operations.mu.Unlock()
 		log.Printf("DNS already configured, but DNS Client stop was attempted")
 		return nil // DNS settings already applied
 	}
-	o.mu.Unlock()
+	operations.mu.Unlock()
 
 	// Ensure the loopback IP exists for the DNS proxy (e.g., 127.0.0.53)
 	// This is needed so the DNS proxy can bind to this address
 	if dnsAddress != "127.0.0.1" {
 		log.Printf("Ensuring loopback IP %s exists...", dnsAddress)
-		if err := o.AddLoopbackIP(dnsAddress); err != nil {
+		if err := operations.AddLoopbackIP(dnsAddress); err != nil {
 			log.Printf("Warning: could not add loopback IP %s: %v (may already exist)", dnsAddress, err)
 			// Continue anyway - the IP might already exist
 		}
 	}
 
 	// Get active interface
-	interfaceName, err := o.GetActiveNetworkInterface()
+	interfaceName, err := operations.GetActiveNetworkInterface()
 	if err != nil {
 		return fmt.Errorf("failed to get active interface: %w", err)
 	}
 
 	// Save original IPv4 DNS
-	originalDNS, err := o.GetCurrentDNS(interfaceName)
+	originalDNS, err := operations.GetCurrentDNS(interfaceName)
 	if err != nil {
 		log.Printf("Warning: could not get original DNS: %v", err)
 		originalDNS = []string{"8.8.8.8"} // Fallback
 	}
 
 	// Save original IPv6 DNS
-	originalDNSv6, err := o.GetCurrentDNSv6(interfaceName)
+	originalDNSv6, err := operations.GetCurrentDNSv6(interfaceName)
 	if err != nil {
 		log.Printf("Warning: could not get original IPv6 DNS: %v", err)
 		originalDNSv6 = []string{} // No fallback for IPv6
 	}
 
-	o.mu.Lock()
-	o.originalDNS[interfaceName] = originalDNS
-	o.originalDNSv6[interfaceName] = originalDNSv6
-	o.mu.Unlock()
+	operations.mu.Lock()
+	operations.originalDNS[interfaceName] = originalDNS
+	operations.originalDNSv6[interfaceName] = originalDNSv6
+	operations.mu.Unlock()
 
 	// Set DNS to the proxy address and ::1 for IPv6
-	if err := o.SetDNS(interfaceName, []string{dnsAddress}); err != nil {
+	if err := operations.SetDNS(interfaceName, []string{dnsAddress}); err != nil {
 		return err
 	}
-	if err := o.SetDNSv6(interfaceName, []string{"::1"}); err != nil {
+	if err := operations.SetDNSv6(interfaceName, []string{"::1"}); err != nil {
 		log.Printf("Warning: could not set IPv6 DNS: %v", err)
 	}
 
-	o.mu.Lock()
-	o.dnsConfigured = true
-	o.mu.Unlock()
+	operations.mu.Lock()
+	operations.dnsConfigured = true
+	operations.mu.Unlock()
 
 	log.Printf("Configured system DNS to %s / ::1 (original IPv4: %v, IPv6: %v)", dnsAddress, originalDNS, originalDNSv6)
 	return nil
 }
 
 // RestoreSystemDNS restores the original DNS configuration
-func (o *Operations) RestoreSystemDNS() error {
-	o.mu.Lock()
-	if !o.dnsConfigured {
-		o.mu.Unlock()
+func (operations *Operations) RestoreSystemDNS() error {
+	operations.mu.Lock()
+	if !operations.dnsConfigured {
+		operations.mu.Unlock()
 		return nil // Nothing to restore
 	}
-	o.mu.Unlock()
+	operations.mu.Unlock()
 
 	var lastErr error
 
 	// Build and execute PowerShell commands for all interfaces
-	o.mu.Lock()
-	for interfaceName, originalDNS := range o.originalDNS {
-		o.mu.Unlock()
+	operations.mu.Lock()
+	for interfaceName, originalDNS := range operations.originalDNS {
+		operations.mu.Unlock()
 		if len(originalDNS) == 0 {
-			if err := o.ResetDNS(interfaceName); err != nil {
+			if err := operations.ResetDNS(interfaceName); err != nil {
 				log.Printf("Failed to reset DNS for %s: %v", interfaceName, err)
 				lastErr = err
 			}
 		} else {
-			if err := o.SetDNS(interfaceName, originalDNS); err != nil {
+			if err := operations.SetDNS(interfaceName, originalDNS); err != nil {
 				log.Printf("Failed to restore DNS for %s: %v", interfaceName, err)
 				lastErr = err
 			}
 		}
-		o.mu.Lock()
+		operations.mu.Lock()
 	}
 
 	// Restore IPv6 DNS
-	for interfaceName, originalDNSv6 := range o.originalDNSv6 {
-		o.mu.Unlock()
+	for interfaceName, originalDNSv6 := range operations.originalDNSv6 {
+		operations.mu.Unlock()
 		if len(originalDNSv6) == 0 {
-			if err := o.ResetDNS(interfaceName); err != nil {
+			if err := operations.ResetDNS(interfaceName); err != nil {
 				log.Printf("Failed to reset IPv6 DNS for %s: %v", interfaceName, err)
 				lastErr = err
 			}
 		} else {
-			if err := o.SetDNSv6(interfaceName, originalDNSv6); err != nil {
+			if err := operations.SetDNSv6(interfaceName, originalDNSv6); err != nil {
 				log.Printf("Failed to restore IPv6 DNS for %s: %v", interfaceName, err)
 				lastErr = err
 			}
 		}
-		o.mu.Lock()
+		operations.mu.Lock()
 	}
 
 	// Restart DNS Client if we stopped it
-	if o.dnsClientStopped {
-		o.mu.Unlock()
-		if err := o.StartDNSClient(); err != nil {
+	if operations.dnsClientStopped {
+		operations.mu.Unlock()
+		if err := operations.StartDNSClient(); err != nil {
 			log.Printf("Failed to restart DNS Client: %v", err)
 			lastErr = err
 		}
-		o.mu.Lock()
+		operations.mu.Lock()
 	}
 
-	o.originalDNS = make(map[string][]string)
-	o.originalDNSv6 = make(map[string][]string)
-	o.dnsConfigured = false
-	o.dnsClientStopped = false
-	o.mu.Unlock()
+	operations.originalDNS = make(map[string][]string)
+	operations.originalDNSv6 = make(map[string][]string)
+	operations.dnsConfigured = false
+	operations.dnsClientStopped = false
+	operations.mu.Unlock()
 
 	log.Printf("DNS configuration restored")
 	return lastErr
@@ -427,7 +427,7 @@ func (o *Operations) RestoreSystemDNS() error {
 
 // StopDNSClient stops and disables the Windows DNS Client service
 // This is aggressive to ensure port 53 is freed for our DNS proxy
-func (o *Operations) StopDNSClient() error {
+func (operations *Operations) StopDNSClient() error {
 	log.Printf("Stopping DNS Client service (Dnscache)...")
 
 	// Use PowerShell to stop the service - it has better privileges for protected services
@@ -474,7 +474,7 @@ exit 1
 	time.Sleep(1 * time.Second)
 
 	// Kill any process still using port 53 (as a last resort)
-	if pid := o.getProcessOnPort53(); pid != 0 {
+	if pid := operations.getProcessOnPort53(); pid != 0 {
 		log.Printf("Found process %d using port 53, killing it...", pid)
 		cmd = exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
 		hideWindow(cmd)
@@ -488,20 +488,20 @@ exit 1
 	}
 
 	// Verify port 53 is free
-	if pid := o.getProcessOnPort53(); pid != 0 {
+	if pid := operations.getProcessOnPort53(); pid != 0 {
 		return fmt.Errorf("port 53 still in use by process %d after stopping DNS Client", pid)
 	}
 
-	o.mu.Lock()
-	o.dnsClientStopped = true
-	o.mu.Unlock()
+	operations.mu.Lock()
+	operations.dnsClientStopped = true
+	operations.mu.Unlock()
 
 	log.Printf("DNS Client service stopped and port 53 is free")
 	return nil
 }
 
 // getProcessOnPort53 returns the PID of the process using UDP port 53, or 0 if none
-func (o *Operations) getProcessOnPort53() int {
+func (operations *Operations) getProcessOnPort53() int {
 	cmd := exec.Command("netstat", "-ano")
 	hideWindow(cmd)
 	output, err := cmd.Output()
@@ -527,7 +527,7 @@ func (o *Operations) getProcessOnPort53() int {
 }
 
 // StartDNSClient re-enables and starts the Windows DNS Client service
-func (o *Operations) StartDNSClient() error {
+func (operations *Operations) StartDNSClient() error {
 	log.Printf("Starting DNS Client service (Dnscache)...")
 
 	// Step 1: Re-enable the service
@@ -544,7 +544,7 @@ func (o *Operations) StartDNSClient() error {
 
 	// Step 3: Wait for service to start
 	maxAttempts := 10
-	for i := 0; i < maxAttempts; i++ {
+	for attempt_count := 0; attempt_count < maxAttempts; attempt_count++ {
 		time.Sleep(500 * time.Millisecond)
 
 		cmd = exec.Command("sc", "query", "Dnscache")
@@ -557,14 +557,14 @@ func (o *Operations) StartDNSClient() error {
 			break
 		}
 
-		if i == maxAttempts-1 {
+		if attempt_count == maxAttempts-1 {
 			log.Printf("Warning: DNS Client service may not have started")
 		}
 	}
 
-	o.mu.Lock()
-	o.dnsClientStopped = false
-	o.mu.Unlock()
+	operations.mu.Lock()
+	operations.dnsClientStopped = false
+	operations.mu.Unlock()
 
 	log.Printf("DNS Client service started")
 	return nil

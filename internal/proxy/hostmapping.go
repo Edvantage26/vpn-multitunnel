@@ -48,23 +48,23 @@ func NewHostMappingCache(ttl time.Duration) *HostMappingCache {
 }
 
 // GetOrAssignIP returns an existing IP for the hostname or assigns a new unique one
-func (c *HostMappingCache) GetOrAssignIP(hostname string, profileID string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (host_mapping_cache *HostMappingCache) GetOrAssignIP(hostname string, profileID string) string {
+	host_mapping_cache.mu.Lock()
+	defer host_mapping_cache.mu.Unlock()
 
 	// Check if hostname already has an IP assigned
-	if ip, exists := c.ipPool[hostname]; exists {
+	if ip, exists := host_mapping_cache.ipPool[hostname]; exists {
 		return ip
 	}
 
 	// Find next available IP in the 127.0.x.y range
 	// Start from 127.0.100.1 to avoid conflicts with profile-based IPs (127.0.1.1, 127.0.2.1, etc.)
-	for x := 100; x < 255; x++ {
-		for y := 1; y < 255; y++ {
-			ip := fmt.Sprintf("127.0.%d.%d", x, y)
-			if !c.usedIPs[ip] {
-				c.ipPool[hostname] = ip
-				c.usedIPs[ip] = true
+	for idx_octet3 := 100; idx_octet3 < 255; idx_octet3++ {
+		for idx_octet4 := 1; idx_octet4 < 255; idx_octet4++ {
+			ip := fmt.Sprintf("127.0.%d.%d", idx_octet3, idx_octet4)
+			if !host_mapping_cache.usedIPs[ip] {
+				host_mapping_cache.ipPool[hostname] = ip
+				host_mapping_cache.usedIPs[ip] = true
 				return ip
 			}
 		}
@@ -75,27 +75,27 @@ func (c *HostMappingCache) GetOrAssignIP(hostname string, profileID string) stri
 }
 
 // Set stores a new mapping
-func (c *HostMappingCache) Set(mapping *HostMapping) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (host_mapping_cache *HostMappingCache) Set(mapping *HostMapping) {
+	host_mapping_cache.mu.Lock()
+	defer host_mapping_cache.mu.Unlock()
 
 	mapping.ResolvedAt = time.Now()
-	c.byTunnelIP[mapping.TunnelIP] = mapping
-	c.byHostname[mapping.Hostname] = mapping
+	host_mapping_cache.byTunnelIP[mapping.TunnelIP] = mapping
+	host_mapping_cache.byHostname[mapping.Hostname] = mapping
 }
 
 // GetByTunnelIP retrieves a mapping by tunnel IP
-func (c *HostMappingCache) GetByTunnelIP(tunnelIP string) *HostMapping {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+func (host_mapping_cache *HostMappingCache) GetByTunnelIP(tunnelIP string) *HostMapping {
+	host_mapping_cache.mu.RLock()
+	defer host_mapping_cache.mu.RUnlock()
 
-	mapping, exists := c.byTunnelIP[tunnelIP]
+	mapping, exists := host_mapping_cache.byTunnelIP[tunnelIP]
 	if !exists {
 		return nil
 	}
 
 	// Check if mapping is still valid
-	if time.Since(mapping.ResolvedAt) > c.mappingTTL {
+	if time.Since(mapping.ResolvedAt) > host_mapping_cache.mappingTTL {
 		return nil
 	}
 
@@ -103,17 +103,17 @@ func (c *HostMappingCache) GetByTunnelIP(tunnelIP string) *HostMapping {
 }
 
 // GetByHostname retrieves a mapping by hostname
-func (c *HostMappingCache) GetByHostname(hostname string) *HostMapping {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+func (host_mapping_cache *HostMappingCache) GetByHostname(hostname string) *HostMapping {
+	host_mapping_cache.mu.RLock()
+	defer host_mapping_cache.mu.RUnlock()
 
-	mapping, exists := c.byHostname[hostname]
+	mapping, exists := host_mapping_cache.byHostname[hostname]
 	if !exists {
 		return nil
 	}
 
 	// Check if mapping is still valid
-	if time.Since(mapping.ResolvedAt) > c.mappingTTL {
+	if time.Since(mapping.ResolvedAt) > host_mapping_cache.mappingTTL {
 		return nil
 	}
 
@@ -121,15 +121,15 @@ func (c *HostMappingCache) GetByHostname(hostname string) *HostMapping {
 }
 
 // GetAllActive returns all active (non-expired) mappings
-func (c *HostMappingCache) GetAllActive() []*HostMapping {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+func (host_mapping_cache *HostMappingCache) GetAllActive() []*HostMapping {
+	host_mapping_cache.mu.RLock()
+	defer host_mapping_cache.mu.RUnlock()
 
 	var result []*HostMapping
 	now := time.Now()
 
-	for _, mapping := range c.byHostname {
-		if now.Sub(mapping.ResolvedAt) <= c.mappingTTL {
+	for _, mapping := range host_mapping_cache.byHostname {
+		if now.Sub(mapping.ResolvedAt) <= host_mapping_cache.mappingTTL {
 			result = append(result, mapping)
 		}
 	}
@@ -138,35 +138,35 @@ func (c *HostMappingCache) GetAllActive() []*HostMapping {
 }
 
 // Remove removes a mapping by hostname
-func (c *HostMappingCache) Remove(hostname string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (host_mapping_cache *HostMappingCache) Remove(hostname string) {
+	host_mapping_cache.mu.Lock()
+	defer host_mapping_cache.mu.Unlock()
 
-	if mapping, exists := c.byHostname[hostname]; exists {
-		delete(c.byTunnelIP, mapping.TunnelIP)
-		delete(c.byHostname, hostname)
+	if mapping, exists := host_mapping_cache.byHostname[hostname]; exists {
+		delete(host_mapping_cache.byTunnelIP, mapping.TunnelIP)
+		delete(host_mapping_cache.byHostname, hostname)
 	}
 }
 
 // Clear removes all mappings
-func (c *HostMappingCache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (host_mapping_cache *HostMappingCache) Clear() {
+	host_mapping_cache.mu.Lock()
+	defer host_mapping_cache.mu.Unlock()
 
-	c.byTunnelIP = make(map[string]*HostMapping)
-	c.byHostname = make(map[string]*HostMapping)
+	host_mapping_cache.byTunnelIP = make(map[string]*HostMapping)
+	host_mapping_cache.byHostname = make(map[string]*HostMapping)
 }
 
 // Cleanup removes expired mappings
-func (c *HostMappingCache) Cleanup() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (host_mapping_cache *HostMappingCache) Cleanup() {
+	host_mapping_cache.mu.Lock()
+	defer host_mapping_cache.mu.Unlock()
 
 	now := time.Now()
-	for hostname, mapping := range c.byHostname {
-		if now.Sub(mapping.ResolvedAt) > c.mappingTTL {
-			delete(c.byTunnelIP, mapping.TunnelIP)
-			delete(c.byHostname, hostname)
+	for hostname, mapping := range host_mapping_cache.byHostname {
+		if now.Sub(mapping.ResolvedAt) > host_mapping_cache.mappingTTL {
+			delete(host_mapping_cache.byTunnelIP, mapping.TunnelIP)
+			delete(host_mapping_cache.byHostname, hostname)
 		}
 	}
 }
