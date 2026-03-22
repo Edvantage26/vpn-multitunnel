@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 400;
+    src: local(""),
+    url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
+}
+
+html, body, #root {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom button styles */
+.btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-colors cursor-pointer;
+}
+
+.btn-primary {
+    @apply bg-primary-600 hover:bg-primary-500 text-white;
+}
+
+.btn-secondary {
+    @apply bg-dark-700 hover:bg-dark-600 text-dark-200;
+}
+
+.btn-success {
+    @apply bg-green-600 hover:bg-green-500 text-white;
+}
+
+.btn-danger {
+    @apply bg-red-600 hover:bg-red-500 text-white;
+}
+
+.btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
+}
+
+/* Input styles */
+.input {
+    @apply px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:border-primary-500 focus:outline-none;
+}
+
+/* Card styles */
+.card {
+    @apply bg-dark-800 rounded-lg border border-dark-700;
+}

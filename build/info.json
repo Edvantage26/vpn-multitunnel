@@ -1,0 +1,15 @@
+{
+  "fixed": {
+    "file_version": "1.2.0.0"
+  },
+  "info": {
+    "0000": {
+      "ProductVersion": "1.2.0",
+      "CompanyName": "Edvantage",
+      "FileDescription": "VPN MultiTunnel - Multi-tunnel WireGuard VPN Manager",
+      "LegalCopyright": "© 2025 Edgar Alarcon",
+      "ProductName": "VPN MultiTunnel",
+      "Comments": "Manage multiple WireGuard VPN tunnels with DNS proxy and port forwarding"
+    }
+  }
+}

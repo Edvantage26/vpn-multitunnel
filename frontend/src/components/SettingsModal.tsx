@@ -1,0 +1,478 @@
+import { useState, useEffect } from 'react'
+import type { Settings, SystemStatus, UpdateSettingsResult } from '../App'
+
+interface SettingsModalProps {
+  onClose: () => void
+}
+
+interface DNSTestDetails {
+  proxyListening: boolean
+  systemDNSConfigured: boolean
+  querySuccess: boolean
+  resolvedIP: string
+  error: string
+}
+
+type SettingsTab = 'general' | 'dns'
+
+function SettingsModal({ onClose }: SettingsModalProps) {
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [appPath, setAppPath] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [dnsTestDetails, setDnsTestDetails] = useState<DNSTestDetails | null>(null)
+  const [dnsTestLoading, setDnsTestLoading] = useState(false)
+  const [dnsStatus, setDnsStatus] = useState<SystemStatus | null>(null)
+  const [dnsActionLoading, setDnsActionLoading] = useState(false)
+  const [originalDnsListenAddress, setOriginalDnsListenAddress] = useState('')
+  const [originalFallbackServer, setOriginalFallbackServer] = useState('')
+  const [connectedTunnelCount, setConnectedTunnelCount] = useState(0)
+  const [saveResult, setSaveResult] = useState<UpdateSettingsResult | null>(null)
+
+  useEffect(() => {
+    loadSettings()
+  }, [])
+
+  const loadSettings = async () => {
+    try {
+      const [loaded_settings, loaded_app_path, loaded_dns_status, loaded_profiles] = await Promise.all([
+        window.go.main.App.GetSettings(),
+        window.go.main.App.GetAppPath(),
+        window.go.main.App.GetSystemStatus(),
+        window.go.main.App.GetProfiles(),
+      ])
+      const typed_settings = loaded_settings as Settings
+      setSettings(typed_settings)
+      setOriginalDnsListenAddress(typed_settings.dnsListenAddress)
+      setOriginalFallbackServer(typed_settings.dnsFallbackServer)
+      setAppPath(loaded_app_path)
+      setDnsStatus(loaded_dns_status)
+      const active_count = (loaded_profiles || []).filter((profile_status: { connected: boolean }) => profile_status.connected).length
+      setConnectedTunnelCount(active_count)
+    } catch (load_error) {
+      setError(String(load_error))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!settings) return
+    setSaving(true)
+    setError('')
+    setSaveResult(null)
+    try {
+      const update_result = await window.go.main.App.UpdateSettings(settings)
+      setSaveResult(update_result)
+      if (update_result.warning) {
+        setError(update_result.warning)
+      }
+      // Refresh DNS status after save
+      const refreshed_status = await window.go.main.App.GetSystemStatus()
+      setDnsStatus(refreshed_status)
+      setOriginalDnsListenAddress(settings.dnsListenAddress)
+      setOriginalFallbackServer(settings.dnsFallbackServer)
+      // Only close if no warning
+      if (!update_result.warning) {
+        onClose()
+      }
+    } catch (save_error) {
+      setError(String(save_error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDNSTest = async () => {
+    if (!settings) return
+    setDnsTestLoading(true)
+    setDnsTestDetails(null)
+    try {
+      const dns_test_address = settings.dnsListenAddress || '127.0.0.53'
+      const test_result = await (window.go.main.App.TestDNSConnectivity as unknown as (address: string) => Promise<DNSTestDetails>)(dns_test_address)
+      setDnsTestDetails(test_result)
+    } catch (test_error) {
+      setDnsTestDetails({
+        proxyListening: false,
+        systemDNSConfigured: false,
+        querySuccess: false,
+        resolvedIP: '',
+        error: String(test_error),
+      })
+    } finally {
+      setDnsTestLoading(false)
+    }
+  }
+
+  const handleDNSActivate = async () => {
+    setDnsActionLoading(true)
+    try {
+      await window.go.main.App.ConfigureDNS()
+      setDnsStatus(await window.go.main.App.GetSystemStatus())
+    } catch {} finally { setDnsActionLoading(false) }
+  }
+
+  const handleDNSRestore = async () => {
+    setDnsActionLoading(true)
+    try {
+      await window.go.main.App.RestoreDNS()
+      setDnsStatus(await window.go.main.App.GetSystemStatus())
+    } catch {} finally { setDnsActionLoading(false) }
+  }
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="card p-6">
+          <p className="text-dark-400">Loading settings...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!settings) return null
+
+  const tabs: { tab_id: SettingsTab; tab_label: string }[] = [
+    { tab_id: 'general', tab_label: 'General' },
+    { tab_id: 'dns', tab_label: 'DNS Proxy' },
+  ]
+
+  const dns_address_changed = settings.dnsListenAddress !== originalDnsListenAddress
+  const fallback_changed = settings.dnsFallbackServer !== originalFallbackServer
+  const has_pending_changes = dns_address_changed || fallback_changed
+  const dns_is_active = dnsStatus?.dnsConfigured ?? false
+
+  // Auto-configure status text
+  const getAutoConfigureStatusText = (): { text: string; color: string } => {
+    if (settings.autoConfigureDNS) {
+      if (connectedTunnelCount > 0 && dns_is_active) {
+        return { text: 'Active — system DNS is managed automatically', color: 'text-green-400' }
+      }
+      return { text: 'Waiting — will activate on next tunnel connection', color: 'text-dark-400' }
+    }
+    if (dns_is_active) {
+      return { text: 'DNS was manually activated', color: 'text-yellow-400' }
+    }
+    return { text: 'Manual mode — use the buttons above to control DNS', color: 'text-dark-500' }
+  }
+
+  const auto_configure_status = getAutoConfigureStatusText()
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="card w-full max-w-2xl mx-4 flex flex-col" style={{ maxHeight: '80vh' }}>
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 pb-0">
+          <h2 className="text-xl font-bold text-white">Settings</h2>
+          <button onClick={onClose} className="text-dark-400 hover:text-dark-200">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 px-6 pt-4 border-b border-dark-600">
+          {tabs.map(({ tab_id, tab_label }) => (
+            <button
+              key={tab_id}
+              onClick={() => setActiveTab(tab_id)}
+              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                activeTab === tab_id
+                  ? 'bg-dark-700 text-white border-b-2 border-primary-500'
+                  : 'text-dark-400 hover:text-dark-200 hover:bg-dark-800'
+              }`}
+            >
+              {tab_label}
+            </button>
+          ))}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="mx-6 mt-4 p-3 bg-red-900/50 border border-red-700 rounded text-red-200 text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Save result notification */}
+        {saveResult && !saveResult.warning && (saveResult.dnsProxyRestarted || saveResult.systemDNSReconfigured) && (
+          <div className="mx-6 mt-4 p-3 bg-green-900/30 border border-green-700/40 rounded text-green-300 text-sm">
+            {saveResult.systemDNSReconfigured
+              ? 'DNS proxy restarted and system DNS reconfigured on new address.'
+              : saveResult.dnsProxyRestarted
+                ? 'DNS proxy restarted with updated configuration.'
+                : 'Settings saved.'}
+          </div>
+        )}
+
+        {/* Tab Content (scrollable) */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* General Tab */}
+          {activeTab === 'general' && (
+            <div className="space-y-5">
+              {/* App Path */}
+              <div>
+                <label className="block text-sm text-dark-300 mb-1">Application Path</label>
+                <div className="px-3 py-2 bg-dark-800 border border-dark-600 rounded text-dark-400 font-mono text-xs select-all">
+                  {appPath}
+                </div>
+              </div>
+
+              {/* Log Level */}
+              <div>
+                <label className="block text-sm text-dark-300 mb-1">Log Level</label>
+                <select
+                  value={settings.logLevel}
+                  onChange={event => setSettings({ ...settings, logLevel: event.target.value })}
+                  className="input w-full"
+                >
+                  <option value="debug">Debug</option>
+                  <option value="info">Info</option>
+                  <option value="warn">Warning</option>
+                  <option value="error">Error</option>
+                </select>
+              </div>
+
+              {/* Behavior */}
+              <div className="space-y-3 pt-2">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.minimizeToTray}
+                    onChange={event => setSettings({ ...settings, minimizeToTray: event.target.checked })}
+                    className="w-4 h-4 rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"
+                  />
+                  <span className="text-dark-200">Minimize to system tray</span>
+                </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.startMinimized}
+                    onChange={event => setSettings({ ...settings, startMinimized: event.target.checked })}
+                    className="w-4 h-4 rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"
+                  />
+                  <span className="text-dark-200">Start minimized</span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* DNS Tab */}
+          {activeTab === 'dns' && (
+            <div className="space-y-4">
+              {/* DNS System Status */}
+              <div className={`rounded-lg border ${
+                dns_is_active
+                  ? 'bg-green-900/10 border-green-700/30'
+                  : 'bg-dark-800 border-dark-600'
+              }`}>
+                <div className="px-4 py-3 flex items-center gap-3">
+                  {/* Status pills */}
+                  <div className="flex-1 flex flex-wrap items-center gap-2">
+                    {/* Proxy status */}
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                      dnsStatus?.dnsProxyEnabled
+                        ? 'bg-green-900/30 text-green-300'
+                        : 'bg-dark-700 text-dark-400'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${dnsStatus?.dnsProxyEnabled ? 'bg-green-400' : 'bg-dark-500'}`} />
+                      Proxy {dnsStatus?.dnsProxyEnabled ? 'listening' : 'stopped'}
+                    </span>
+
+                    {/* System DNS status */}
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                      dns_is_active
+                        ? 'bg-green-900/30 text-green-300'
+                        : 'bg-dark-700 text-dark-400'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${dns_is_active ? 'bg-green-400' : 'bg-dark-500'}`} />
+                      System DNS {dns_is_active ? 'configured' : 'default'}
+                    </span>
+
+                    {/* Tunnel count */}
+                    {connectedTunnelCount > 0 && (
+                      <span className="text-xs text-dark-400">
+                        ({connectedTunnelCount} tunnel{connectedTunnelCount !== 1 ? 's' : ''} active)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex gap-2">
+                    {dns_is_active ? (
+                      <button
+                        onClick={handleDNSRestore}
+                        disabled={dnsActionLoading}
+                        className="px-3 py-1.5 text-xs bg-dark-600 hover:bg-dark-500 text-dark-200 rounded disabled:opacity-50 transition-colors"
+                      >
+                        {dnsActionLoading ? 'Restoring...' : 'Restore Original'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleDNSActivate}
+                        disabled={dnsActionLoading}
+                        className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded disabled:opacity-50 transition-colors"
+                      >
+                        {dnsActionLoading ? 'Activating...' : 'Activate Now'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Configuration Card */}
+              <div className="bg-dark-800 border border-dark-600 rounded-lg">
+                {/* DNS Proxy Address */}
+                <div className="px-4 py-4">
+                  <label className="block text-sm font-medium text-dark-200 mb-1">DNS Proxy Address</label>
+                  <p className="text-xs text-dark-400 mb-2">
+                    Loopback IP where the DNS proxy binds. System DNS will point here when active.
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={settings.dnsListenAddress}
+                      onChange={event => setSettings({ ...settings, dnsListenAddress: event.target.value })}
+                      className="input flex-1 font-mono"
+                      placeholder="127.0.0.53"
+                    />
+                    <button
+                      onClick={handleDNSTest}
+                      disabled={dnsTestLoading}
+                      className="btn btn-secondary text-xs px-4 disabled:opacity-50"
+                    >
+                      {dnsTestLoading ? 'Testing...' : 'Test'}
+                    </button>
+                  </div>
+
+                  {/* Contextual warning when address changed */}
+                  {dns_address_changed && dns_is_active && (
+                    <div className="mt-2 px-3 py-2 bg-amber-900/20 border border-amber-700/40 rounded text-xs text-amber-300">
+                      Saving will restart the DNS proxy and reconfigure system DNS to use the new address.
+                    </div>
+                  )}
+                  {dns_address_changed && !dns_is_active && (
+                    <div className="mt-2 px-3 py-2 bg-blue-900/20 border border-blue-700/40 rounded text-xs text-blue-300">
+                      Saving will restart the DNS proxy on the new address.
+                    </div>
+                  )}
+
+                  {/* Test results */}
+                  {dnsTestDetails && (
+                    <div className="mt-2 space-y-1 px-3 py-2 bg-dark-900 rounded text-xs">
+                      <div className="flex items-center gap-2">
+                        {dnsTestDetails.proxyListening ? (
+                          <svg className="w-3.5 h-3.5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        ) : (
+                          <svg className="w-3.5 h-3.5 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        )}
+                        <span className={dnsTestDetails.proxyListening ? 'text-green-300' : 'text-red-300'}>
+                          Proxy {dnsTestDetails.proxyListening ? 'responding' : 'NOT responding'} on {settings.dnsListenAddress || '127.0.0.53'}:53
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {dnsTestDetails.querySuccess ? (
+                          <svg className="w-3.5 h-3.5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        ) : (
+                          <svg className="w-3.5 h-3.5 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        )}
+                        <span className={dnsTestDetails.querySuccess ? 'text-green-300' : 'text-red-300'}>
+                          {dnsTestDetails.querySuccess
+                            ? `DNS query resolved (${dnsTestDetails.resolvedIP})`
+                            : `DNS query failed${dnsTestDetails.error ? ': ' + dnsTestDetails.error : ''}`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {dnsTestDetails.systemDNSConfigured ? (
+                          <svg className="w-3.5 h-3.5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        ) : (
+                          <svg className="w-3.5 h-3.5 text-dark-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
+                        )}
+                        <span className={dnsTestDetails.systemDNSConfigured ? 'text-green-300' : 'text-dark-400'}>
+                          System DNS {dnsTestDetails.systemDNSConfigured ? 'pointing to proxy' : 'not configured (normal if no tunnels active)'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Divider */}
+                <div className="border-t border-dark-700" />
+
+                {/* Fallback DNS Server */}
+                <div className="px-4 py-4">
+                  <label className="block text-sm font-medium text-dark-200 mb-1">Fallback DNS Server</label>
+                  <p className="text-xs text-dark-400 mb-2">
+                    Used for domains that don't match any VPN tunnel rule.
+                  </p>
+                  <input
+                    type="text"
+                    value={settings.dnsFallbackServer}
+                    onChange={event => setSettings({ ...settings, dnsFallbackServer: event.target.value })}
+                    className="input w-full font-mono"
+                    placeholder="8.8.8.8"
+                  />
+                  {fallback_changed && (
+                    <div className="mt-2 px-3 py-2 bg-blue-900/20 border border-blue-700/40 rounded text-xs text-blue-300">
+                      Saving will restart the DNS proxy with the new fallback server.
+                    </div>
+                  )}
+                </div>
+
+                {/* Divider */}
+                <div className="border-t border-dark-700" />
+
+                {/* Auto-configure DNS */}
+                <div className="px-4 py-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoConfigureDNS}
+                      onChange={event => setSettings({ ...settings, autoConfigureDNS: event.target.checked })}
+                      className="w-4 h-4 rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-dark-200">Auto-configure DNS</span>
+                      <p className="text-xs text-dark-400">
+                        Activate when a tunnel connects, restore when all disconnect.
+                      </p>
+                    </div>
+                  </label>
+                  <p className={`text-xs mt-2 ml-7 ${auto_configure_status.color}`}>
+                    {auto_configure_status.text}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer (fixed) */}
+        <div className="flex items-center justify-between p-6 pt-4 border-t border-dark-700">
+          <div>
+            {has_pending_changes && activeTab === 'dns' && (
+              <span className="text-xs text-amber-400">Unsaved DNS changes</span>
+            )}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="btn btn-secondary">
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="btn btn-primary disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default SettingsModal

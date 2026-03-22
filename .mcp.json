@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vpn-debug": {
+      "command": "python",
+      "args": ["mcp/vpn_mcp_server.py"]
+    }
+  }
+}
