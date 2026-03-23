@@ -1085,6 +1085,79 @@ exit 0
             installer_path = project_root / "build" / "bin" / "VPNMultiTunnel-amd64-installer.exe"
             github_repo = "Edvantage26/vpn-multitunnel"
 
+            # Step 0: Update version in all source files, commit and push
+            semver = version_tag.lstrip("v")
+            if not semver:
+                lines.append("❌ Version tag is required (e.g., v1.1.0)")
+                return [TextContent(type="text", text="\n".join(lines))]
+
+            lines.append(f"## Step 0: Updating version to {semver}...")
+
+            version_files_updated = []
+            try:
+                # Update internal/app/version.go
+                version_go_path = project_root / "internal" / "app" / "version.go"
+                if version_go_path.exists():
+                    import re
+                    version_go_content = version_go_path.read_text(encoding="utf-8")
+                    version_go_new = re.sub(
+                        r'var AppVersion = ".*?"',
+                        f'var AppVersion = "{semver}"',
+                        version_go_content
+                    )
+                    version_go_path.write_text(version_go_new, encoding="utf-8")
+                    version_files_updated.append("internal/app/version.go")
+
+                # Update build/info.json
+                build_info_path = project_root / "build" / "info.json"
+                if build_info_path.exists():
+                    import json
+                    build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
+                    build_info["fixed"]["file_version"] = f"{semver}.0"
+                    build_info["info"]["0000"]["ProductVersion"] = semver
+                    build_info_path.write_text(json.dumps(build_info, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                    version_files_updated.append("build/info.json")
+
+                # Update wails.json
+                wails_json_path = project_root / "wails.json"
+                if wails_json_path.exists():
+                    import json
+                    wails_config = json.loads(wails_json_path.read_text(encoding="utf-8"))
+                    wails_config["info"]["productVersion"] = semver
+                    wails_json_path.write_text(json.dumps(wails_config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                    version_files_updated.append("wails.json")
+
+                lines.append(f"- Updated: {', '.join(version_files_updated)}")
+
+                # Git commit and push
+                subprocess.run(
+                    ["git", "add"] + version_files_updated,
+                    cwd=str(project_root), capture_output=True, text=True, timeout=10
+                )
+                commit_result = subprocess.run(
+                    ["git", "commit", "-m", f"chore: bump version to {semver}"],
+                    cwd=str(project_root), capture_output=True, text=True, timeout=10
+                )
+                if commit_result.returncode == 0:
+                    lines.append("- Git commit: OK")
+                else:
+                    lines.append(f"- Git commit: skipped ({commit_result.stdout.strip() or 'no changes'})")
+
+                push_result = subprocess.run(
+                    ["git", "push"],
+                    cwd=str(project_root), capture_output=True, text=True, timeout=30
+                )
+                if push_result.returncode == 0:
+                    lines.append("- Git push: OK")
+                else:
+                    lines.append(f"⚠️ Git push failed: {push_result.stderr.strip()}")
+
+            except Exception as version_error:
+                lines.append(f"❌ Version update failed: {version_error}")
+                return [TextContent(type="text", text="\n".join(lines))]
+
+            lines.append("")
+
             # Step 1: Build installer (optional)
             if should_build:
                 lines.append("## Step 1: Building installer...")
