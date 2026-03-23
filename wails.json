@@ -6,6 +6,12 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "info": {
+    "companyName": "Edvantage",
+    "productName": "VPN MultiTunnel",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2025 Edvantage"
+  },
   "author": {
     "name": "Edgar-Alarcon",
     "email": "31038111+Edgar-Alarcon@users.noreply.github.com"

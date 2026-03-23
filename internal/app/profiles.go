@@ -240,6 +240,36 @@ func (app *App) ImportConfig() (*config.Profile, error) {
 	return profile, nil
 }
 
+// CreateConfigFromText creates a new profile from raw WireGuard config text
+func (app *App) CreateConfigFromText(config_name string, config_content string) (*config.Profile, error) {
+	if strings.TrimSpace(config_name) == "" {
+		return nil, fmt.Errorf("configuration name is required")
+	}
+	if strings.TrimSpace(config_content) == "" {
+		return nil, fmt.Errorf("configuration content is required")
+	}
+
+	profile, import_error := app.profileService.ImportFromText(config_name, config_content)
+	if import_error != nil {
+		return nil, import_error
+	}
+
+	// Add loopback IP for the new profile if running as admin
+	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.Enabled {
+		if tunnelIP := app.profileService.GetTunnelIP(profile.ID); tunnelIP != "" {
+			if system.IsAdmin() {
+				if loopback_error := app.networkConfig.EnsureLoopbackIPs([]string{tunnelIP}); loopback_error != nil {
+					log.Printf("Warning: Failed to add loopback IP %s: %v", tunnelIP, loopback_error)
+				} else {
+					log.Printf("Added loopback IP %s for profile %s", tunnelIP, profile.Name)
+				}
+			}
+		}
+	}
+
+	return profile, nil
+}
+
 // UpdateProfile updates a profile
 func (app *App) UpdateProfile(profile config.Profile) error {
 	if err := app.profileService.Update(profile); err != nil {

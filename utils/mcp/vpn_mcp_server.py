@@ -43,11 +43,12 @@ if str(_go_bin_path) not in os.environ.get("PATH", ""):
 
 # Path to the VPN executable - prefer production (has service connection), fallback to dev
 VPN_APP_PROD_DIR = Path("C:/Program Files/VPNMultiTunnel/VPNMultiTunnel")
-VPN_APP_DEV_PATH = Path(__file__).parent.parent / "build" / "bin" / "VPNMultiTunnel.exe"
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+VPN_APP_DEV_PATH = PROJECT_ROOT / "build" / "bin" / "VPNMultiTunnel.exe"
 VPN_APP_PATH = VPN_APP_PROD_DIR / "VPNMultiTunnel.exe" if VPN_APP_PROD_DIR.exists() else VPN_APP_DEV_PATH
 
 # Paths for service/app update
-VPN_SERVICE_DEV_PATH = Path(__file__).parent.parent / "build" / "bin" / "VPNMultiTunnel-service.exe"
+VPN_SERVICE_DEV_PATH = PROJECT_ROOT / "build" / "bin" / "VPNMultiTunnel-service.exe"
 VPN_SERVICE_PROD_PATH = VPN_APP_PROD_DIR / "VPNMultiTunnel-service.exe"
 VPN_APP_PROD_PATH = VPN_APP_PROD_DIR / "VPNMultiTunnel.exe"
 

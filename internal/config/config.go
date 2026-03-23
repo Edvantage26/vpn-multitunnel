@@ -14,7 +14,6 @@ type Settings struct {
 	LogLevel       string   `json:"logLevel"`
 	AutoConnect    []string `json:"autoConnect"`
 	PortRangeStart int      `json:"portRangeStart"` // Deprecated: was used for SOCKS5 auto-assignment
-	MinimizeToTray bool     `json:"minimizeToTray"`
 	StartMinimized bool     `json:"startMinimized"`
 	// Transparent proxy automation settings
 	AutoConfigureLoopback bool   `json:"autoConfigureLoopback"` // Auto-add loopback IPs on startup
@@ -120,8 +119,7 @@ func Default() *AppConfig {
 			LogLevel:              "info",
 			AutoConnect:           []string{},
 			PortRangeStart:        10800,
-			MinimizeToTray:        true,
-			StartMinimized:        false,
+			StartMinimized:        true,
 			AutoConfigureLoopback: true,         // Enable by default
 			AutoConfigureDNS:      true,         // Enable by default
 			UsePort53:             true,         // Use port 53 for transparent proxy

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Profile } from '../App'
+import ServicePortSelector from './ServicePortSelector'
 
 interface ProfileEditorProps {
   profile: Profile
@@ -17,41 +18,6 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
   const [configLoading, setConfigLoading] = useState(false)
   const [configError, setConfigError] = useState('')
   const [configSaved, setConfigSaved] = useState(false)
-  const [newPortInput, setNewPortInput] = useState('')
-
-  const handleAddPorts = () => {
-    if (!newPortInput.trim()) return
-
-    const parsedPorts = newPortInput.split(',')
-      .map(segment => parseInt(segment.trim(), 10))
-      .filter(portValue => !isNaN(portValue) && portValue >= 1 && portValue <= 65535)
-
-    if (parsedPorts.length === 0) return
-
-    const currentPorts = editedProfile.tcpProxyPorts || []
-    const uniqueNewPorts = parsedPorts.filter(
-      portValue => !currentPorts.includes(portValue)
-    )
-
-    if (uniqueNewPorts.length > 0) {
-      setEditedProfile({
-        ...editedProfile,
-        tcpProxyPorts: [...currentPorts, ...uniqueNewPorts].sort((portA, portB) => portA - portB)
-      })
-    }
-    setNewPortInput('')
-  }
-
-  const handleRemovePort = (portToRemove: number) => {
-    const updatedPorts = (editedProfile.tcpProxyPorts || []).filter(
-      portValue => portValue !== portToRemove
-    )
-    setEditedProfile({
-      ...editedProfile,
-      tcpProxyPorts: updatedPorts
-    })
-  }
-
   const loadConfigContent = async () => {
     setConfigLoading(true)
     setConfigError('')
@@ -416,54 +382,17 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
             <h3 className="text-sm font-semibold text-dark-300 uppercase tracking-wider mb-3">
               TCP Proxy Ports
             </h3>
-            <div className="space-y-3">
-              <p className="text-xs text-dark-400 mb-2">
-                Ports proxied through this tunnel. Only traffic to these ports will be intercepted.
-              </p>
-
-              {/* Port chips */}
-              <div className="flex flex-wrap gap-1.5 mb-2 min-h-[32px]">
-                {(editedProfile.tcpProxyPorts || []).length === 0 ? (
-                  <span className="text-dark-500 text-sm italic">No ports configured</span>
-                ) : (
-                  (editedProfile.tcpProxyPorts || []).map(portValue => (
-                    <span
-                      key={portValue}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-700 rounded text-sm text-dark-200 group hover:bg-dark-600"
-                    >
-                      {portValue}
-                      <button
-                        onClick={() => handleRemovePort(portValue)}
-                        className="text-dark-400 hover:text-red-400 transition-colors"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </span>
-                  ))
-                )}
-              </div>
-
-              {/* Add port input */}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newPortInput}
-                  onChange={(event) => setNewPortInput(event.target.value)}
-                  onKeyPress={(event) => event.key === 'Enter' && (event.preventDefault(), handleAddPorts())}
-                  placeholder="Add ports (e.g., 8080, 5432)"
-                  className="flex-1 input"
-                />
-                <button
-                  onClick={handleAddPorts}
-                  disabled={!newPortInput.trim()}
-                  className="btn btn-secondary px-3"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
+            <p className="text-xs text-dark-400 mb-2">
+              Ports proxied through this tunnel. Only traffic to these ports will be intercepted.
+            </p>
+            <ServicePortSelector
+              selectedPorts={editedProfile.tcpProxyPorts || []}
+              onPortsChange={(ports) => setEditedProfile({
+                ...editedProfile,
+                tcpProxyPorts: ports
+              })}
+              size="md"
+            />
           </div>
 
           {/* Config File Editor */}

@@ -79,7 +79,7 @@ ManifestDPIAware true
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-InstallDir "$PROGRAMFILES64\VPNMultiTunnel" # Default installing folder
+InstallDir "$PROGRAMFILES64\Edvantage\VPN MultiTunnel" # Default installing folder
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit

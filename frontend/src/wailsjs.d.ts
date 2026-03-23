@@ -13,6 +13,7 @@ declare global {
           ConnectAll: () => Promise<void>
           DisconnectAll: () => Promise<void>
           ImportConfig: (path: string) => Promise<Profile>
+          CreateConfigFromText: (configName: string, configContent: string) => Promise<Profile>
           DeleteProfile: (id: string) => Promise<void>
           UpdateProfile: (profile: Profile) => Promise<void>
           GetEnvVars: (profileId: string) => Promise<string>
@@ -76,7 +77,6 @@ interface Settings {
   logLevel: string
   autoConnect: string[]
   portRangeStart: number
-  minimizeToTray: boolean
   startMinimized: boolean
 }
 

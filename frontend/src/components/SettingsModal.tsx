@@ -241,15 +241,6 @@ function SettingsModal({ onClose }: SettingsModalProps) {
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={settings.minimizeToTray}
-                    onChange={event => setSettings({ ...settings, minimizeToTray: event.target.checked })}
-                    className="w-4 h-4 rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"
-                  />
-                  <span className="text-dark-200">Minimize to system tray</span>
-                </label>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
                     checked={settings.startMinimized}
                     onChange={event => setSettings({ ...settings, startMinimized: event.target.checked })}
                     className="w-4 h-4 rounded bg-dark-700 border-dark-600 text-primary-500 focus:ring-primary-500"

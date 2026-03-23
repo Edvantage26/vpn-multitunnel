@@ -149,6 +149,90 @@ func (profile_service *ProfileService) Import(filePath string) (*config.Profile,
 	return profile, nil
 }
 
+// ImportFromText creates a new profile from raw WireGuard config text and a name
+func (profile_service *ProfileService) ImportFromText(config_name string, config_content string) (*config.Profile, error) {
+	// Write content to a temp file for parsing
+	temp_file, temp_error := os.CreateTemp("", "wg-import-*.conf")
+	if temp_error != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", temp_error)
+	}
+	defer os.Remove(temp_file.Name())
+
+	if _, write_error := temp_file.WriteString(config_content); write_error != nil {
+		temp_file.Close()
+		return nil, fmt.Errorf("failed to write temp file: %w", write_error)
+	}
+	temp_file.Close()
+
+	// Parse and validate the config
+	wg_config, parse_error := config.ParseWireGuardConfig(temp_file.Name())
+	if parse_error != nil {
+		return nil, fmt.Errorf("invalid WireGuard config: %w", parse_error)
+	}
+
+	// Sanitize filename from the provided name
+	safe_filename := strings.ToLower(strings.TrimSpace(config_name))
+	safe_filename = strings.Map(func(char_value rune) rune {
+		if (char_value >= 'a' && char_value <= 'z') || (char_value >= '0' && char_value <= '9') || char_value == '-' || char_value == '_' {
+			return char_value
+		}
+		if char_value == ' ' {
+			return '-'
+		}
+		return -1
+	}, safe_filename)
+	if safe_filename == "" {
+		safe_filename = "tunnel"
+	}
+	conf_filename := safe_filename + ".conf"
+
+	// Save config file to configs directory
+	config_dir, dir_error := config.GetConfigDir()
+	if dir_error != nil {
+		return nil, fmt.Errorf("failed to get config directory: %w", dir_error)
+	}
+
+	dest_path := filepath.Join(config_dir, conf_filename)
+
+	// Avoid overwriting existing files by appending a number
+	if _, stat_error := os.Stat(dest_path); stat_error == nil {
+		for file_counter := 2; file_counter <= 100; file_counter++ {
+			candidate_filename := safe_filename + "-" + strconv.Itoa(file_counter) + ".conf"
+			candidate_path := filepath.Join(config_dir, candidate_filename)
+			if _, stat_error := os.Stat(candidate_path); os.IsNotExist(stat_error) {
+				conf_filename = candidate_filename
+				dest_path = candidate_path
+				break
+			}
+		}
+	}
+
+	if write_error := os.WriteFile(dest_path, []byte(config_content), 0600); write_error != nil {
+		return nil, fmt.Errorf("failed to save config file: %w", write_error)
+	}
+
+	// Create profile using the saved config file path
+	profile := config.ProfileFromWireGuardConfig(wg_config, dest_path)
+	profile.Name = strings.TrimSpace(config_name)
+
+	// Assign tunnel IP for transparent proxy
+	tunnel_ip := profile_service.assignTunnelIP(profile.ID)
+	if tunnel_ip != "" {
+		if profile_service.config.TCPProxy.TunnelIPs == nil {
+			profile_service.config.TCPProxy.TunnelIPs = make(map[string]string)
+		}
+		profile_service.config.TCPProxy.TunnelIPs[profile.ID] = tunnel_ip
+	}
+
+	// Add to config
+	if create_error := profile_service.Create(*profile); create_error != nil {
+		os.Remove(dest_path)
+		return nil, create_error
+	}
+
+	return profile, nil
+}
+
 // assignTunnelIP assigns a unique tunnel IP for the transparent proxy
 func (profile_service *ProfileService) assignTunnelIP(profileID string) string {
 	// Ensure TunnelIPs map exists

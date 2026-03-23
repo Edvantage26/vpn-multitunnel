@@ -75,7 +75,6 @@ export interface Settings {
   logLevel: string
   autoConnect: string[]
   portRangeStart: number
-  minimizeToTray: boolean
   startMinimized: boolean
   autoConfigureLoopback: boolean
   autoConfigureDNS: boolean
@@ -101,6 +100,7 @@ declare global {
           Disconnect: (id: string) => Promise<void>
           DeleteProfile: (id: string) => Promise<void>
           ImportConfig: () => Promise<Profile>
+          CreateConfigFromText: (configName: string, configContent: string) => Promise<Profile>
           UpdateProfile: (profile: Profile) => Promise<void>
           TestConnection: (profileId: string, host: string, port: number) => Promise<[boolean, string]>
           GetSettings: () => Promise<Settings>

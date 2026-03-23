@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Profile, ProfileStatus, ActiveConnection } from '../App'
+import ServicePortSelector from './ServicePortSelector'
 
 // WireGuard config display type matching Go backend
 export interface WireGuardConfigDisplay {
@@ -65,9 +66,6 @@ function TunnelDetailPanel({
   const [editingSuffixIndex, setEditingSuffixIndex] = useState<number | null>(null)
   const [editingSuffixValue, setEditingSuffixValue] = useState('')
 
-  // TCP Proxy Ports
-  const [newPortInput, setNewPortInput] = useState('')
-
   // Fetch WireGuard config on mount
   useEffect(() => {
     const fetchConfig = async () => {
@@ -89,7 +87,6 @@ function TunnelDetailPanel({
     setEditingName(false)
     setNewSuffixInput('')
     setEditingSuffixIndex(null)
-    setNewPortInput('')
     // Reset loading states when switching profiles
     setIsConnecting(false)
     setIsDisconnecting(false)
@@ -172,35 +169,6 @@ function TunnelDetailPanel({
     } finally {
       setIsDisconnecting(false)
     }
-  }
-
-  // TCP Proxy Ports handlers
-  const activePorts = profile.tcpProxyPorts || []
-
-  const handleAddPorts = () => {
-    if (!newPortInput.trim()) return
-    const parsedPorts = newPortInput
-      .split(/[,\s]+/)
-      .map(portStr => parseInt(portStr.trim(), 10))
-      .filter(portNum => !isNaN(portNum) && portNum > 0 && portNum <= 65535)
-    if (parsedPorts.length === 0) return
-
-    const currentPorts = profile.tcpProxyPorts || []
-    const uniquePorts = [...new Set([...currentPorts, ...parsedPorts])].sort((portA, portB) => portA - portB)
-    onUpdateProfile({
-      ...profile,
-      tcpProxyPorts: uniquePorts
-    })
-    setNewPortInput('')
-  }
-
-  const handleRemovePort = (portToRemove: number) => {
-    const currentPorts = profile.tcpProxyPorts || []
-    const filteredPorts = currentPorts.filter(portNum => portNum !== portToRemove)
-    onUpdateProfile({
-      ...profile,
-      tcpProxyPorts: filteredPorts.length > 0 ? filteredPorts : undefined as unknown as number[]
-    })
   }
 
   // Domain suffix handlers
@@ -653,51 +621,14 @@ function TunnelDetailPanel({
             TCP Proxy Ports
           </h3>
         </div>
-
-        <div>
-          {/* Port chips */}
-          <div className="flex flex-wrap gap-1.5 mb-3 min-h-[28px]">
-            {activePorts.length === 0 ? (
-              <span className="text-dark-500 text-xs italic">No ports configured</span>
-            ) : (
-              activePorts.map(portValue => (
-                <span
-                  key={portValue}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-700 rounded text-xs text-dark-200 group hover:bg-dark-600"
-                >
-                  {portValue}
-                  <button
-                    onClick={() => handleRemovePort(portValue)}
-                    className="text-dark-500 hover:text-red-400 transition-colors"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </span>
-              ))
-            )}
-          </div>
-
-          {/* Add port input */}
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newPortInput}
-              onChange={(event) => setNewPortInput(event.target.value)}
-              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); handleAddPorts() } }}
-              placeholder="Add ports (e.g., 8080, 5432)"
-              className="flex-1 input py-1 text-sm"
-            />
-            <button
-              onClick={handleAddPorts}
-              disabled={!newPortInput.trim()}
-              className="btn btn-secondary text-xs py-1 px-3"
-            >
-              Add
-            </button>
-          </div>
-        </div>
+        <ServicePortSelector
+          selectedPorts={profile.tcpProxyPorts || []}
+          onPortsChange={(ports) => onUpdateProfile({
+            ...profile,
+            tcpProxyPorts: ports.length > 0 ? ports : undefined as unknown as number[]
+          })}
+          size="sm"
+        />
       </div>
 
       {/* Interface Section */}
