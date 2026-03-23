@@ -144,13 +144,13 @@ function Sidebar({
                   : 'border-l-2 border-transparent'
               } ${draggedId === profile.id ? 'opacity-40' : ''} ${getDropIndicatorClass(profile.id)}`}
             >
-              {/* Status indicator - spinner when connecting, green when connected */}
+              {/* Status indicator - spinner when connecting, green when connected, red on error */}
               {profile.connecting ? (
                 <div className="w-3 h-3 flex-shrink-0 rounded-full border-2 border-primary-500 border-t-transparent animate-spin" />
               ) : (
                 <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
-                  profile.connected ? 'bg-green-500' : 'bg-dark-500'
-                }`} />
+                  profile.connected ? 'bg-green-500' : profile.lastError ? 'bg-red-500' : 'bg-dark-500'
+                }`} title={profile.lastError || ''} />
               )}
 
               <span className="font-medium text-dark-100 truncate">{profile.name}</span>

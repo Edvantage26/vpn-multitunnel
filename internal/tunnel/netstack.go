@@ -144,9 +144,15 @@ func configureDevice(dev *device.Device, wgConfig *config.WireGuardConfig) error
 			configLines = append(configLines, fmt.Sprintf("preshared_key=%s", hex.EncodeToString(pskBytes)))
 		}
 
-		// Endpoint
+		// Endpoint — pre-resolve hostname to IP so WireGuard doesn't depend
+		// on its internal resolver (which may fail if system DNS points to
+		// our proxy and the proxy isn't fully ready yet).
 		if peer.Endpoint != "" {
-			configLines = append(configLines, fmt.Sprintf("endpoint=%s", peer.Endpoint))
+			resolvedEndpoint, resolveErr := preResolveEndpoint(peer.Endpoint)
+			if resolveErr != nil {
+				return fmt.Errorf("failed to resolve endpoint %s: %w", peer.Endpoint, resolveErr)
+			}
+			configLines = append(configLines, fmt.Sprintf("endpoint=%s", resolvedEndpoint))
 		}
 
 		// Persistent keepalive
@@ -242,6 +248,30 @@ func (tunnel *Tunnel) UpdateStats() {
 // GetNet returns the netstack.Net for this tunnel
 func (tunnel *Tunnel) GetNet() *netstack.Net {
 	return tunnel.Net
+}
+
+// preResolveEndpoint resolves a hostname:port endpoint to ip:port.
+// If the host part is already an IP address, it is returned unchanged.
+func preResolveEndpoint(endpoint string) (string, error) {
+	host, port, splitErr := net.SplitHostPort(endpoint)
+	if splitErr != nil {
+		return endpoint, nil // not host:port format, pass through
+	}
+
+	// If already an IP, no resolution needed
+	if net.ParseIP(host) != nil {
+		return endpoint, nil
+	}
+
+	resolved_ips, lookupErr := net.LookupHost(host)
+	if lookupErr != nil {
+		return "", fmt.Errorf("DNS lookup failed for %s: %w", host, lookupErr)
+	}
+	if len(resolved_ips) == 0 {
+		return "", fmt.Errorf("no IP addresses found for %s", host)
+	}
+
+	return net.JoinHostPort(resolved_ips[0], port), nil
 }
 
 // GetDebugInfo returns detailed debug information about the tunnel

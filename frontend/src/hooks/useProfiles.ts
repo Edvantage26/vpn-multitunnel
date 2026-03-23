@@ -42,9 +42,9 @@ export function useProfiles() {
     }
   }
 
-  const deleteProfile = async (id: string) => {
+  const deleteProfile = async (id: string, deleteConfigFile: boolean = false) => {
     try {
-      await window.go.app.App.DeleteProfile(id)
+      await window.go.app.App.DeleteProfile(id, deleteConfigFile)
       await fetchProfiles()
     } catch (err) {
       throw err

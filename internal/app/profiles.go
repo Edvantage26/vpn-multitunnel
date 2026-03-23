@@ -27,6 +27,7 @@ func (app *App) GetProfiles() []ProfileStatus {
 			Connected:  app.tunnelManager.IsConnected(current_profile.ID),
 			Connecting: app.connectingProfiles[current_profile.ID],
 			TunnelIP:   app.profileService.GetTunnelIP(current_profile.ID),
+			LastError:  app.lastConnectErrors[current_profile.ID],
 		}
 
 		// Get stats if connected
@@ -85,8 +86,16 @@ func (app *App) connectInternal(id string, allowElevation bool) error {
 
 	// Start the tunnel
 	if err := app.tunnelManager.Start(profile); err != nil {
+		app.mu.Lock()
+		app.lastConnectErrors[id] = err.Error()
+		app.mu.Unlock()
 		return err
 	}
+
+	// Clear any previous error on successful connect
+	app.mu.Lock()
+	delete(app.lastConnectErrors, id)
+	app.mu.Unlock()
 
 	// Configure system DNS if not already configured and auto-configure is enabled
 	if !app.networkConfig.IsTransparentDNSConfigured() && app.config.Settings.AutoConfigureDNS && app.config.DNSProxy.Enabled {
@@ -168,8 +177,14 @@ func (app *App) DisconnectAll() error {
 	return nil
 }
 
-// DeleteProfile deletes a profile by ID
-func (app *App) DeleteProfile(id string) error {
+// GetProfileConfigPath returns the full filesystem path to a profile's WireGuard config file.
+func (app *App) GetProfileConfigPath(id string) string {
+	return app.profileService.GetConfigFilePath(id)
+}
+
+// DeleteProfile deletes a profile by ID. If deleteConfigFile is true, the
+// associated WireGuard .conf file is also removed from disk.
+func (app *App) DeleteProfile(id string, deleteConfigFile bool) error {
 	// Disconnect first if connected
 	if app.tunnelManager.IsConnected(id) {
 		app.tunnelManager.Stop(id)
@@ -179,7 +194,7 @@ func (app *App) DeleteProfile(id string) error {
 	tunnelIP := app.profileService.GetTunnelIP(id)
 
 	// Delete the profile
-	if err := app.profileService.Delete(id); err != nil {
+	if err := app.profileService.Delete(id, deleteConfigFile); err != nil {
 		return err
 	}
 

@@ -71,8 +71,9 @@ func (profile_service *ProfileService) Update(profile config.Profile) error {
 	return fmt.Errorf("profile not found: %s", profile.ID)
 }
 
-// Delete removes a profile
-func (profile_service *ProfileService) Delete(id string) error {
+// Delete removes a profile. If deleteConfigFile is true, the associated
+// WireGuard config file on disk is also removed.
+func (profile_service *ProfileService) Delete(id string, deleteConfigFile bool) error {
 	var newProfiles []config.Profile
 	found := false
 
@@ -81,10 +82,9 @@ func (profile_service *ProfileService) Delete(id string) error {
 			newProfiles = append(newProfiles, existing_profile)
 		} else {
 			found = true
-			// Optionally delete the config file
-			if existing_profile.ConfigFile != "" {
-				configPath, err := config.GetConfigFilePath(existing_profile.ConfigFile)
-				if err == nil {
+			if deleteConfigFile && existing_profile.ConfigFile != "" {
+				configPath, resolve_error := config.GetConfigFilePath(existing_profile.ConfigFile)
+				if resolve_error == nil {
 					os.Remove(configPath)
 				}
 			}
@@ -97,6 +97,19 @@ func (profile_service *ProfileService) Delete(id string) error {
 
 	profile_service.config.Profiles = newProfiles
 	return config.Save(profile_service.config)
+}
+
+// GetConfigFilePath returns the full path to the config file for a profile, or empty string if not found.
+func (profile_service *ProfileService) GetConfigFilePath(id string) string {
+	for _, existing_profile := range profile_service.config.Profiles {
+		if existing_profile.ID == id && existing_profile.ConfigFile != "" {
+			resolved_path, resolve_error := config.GetConfigFilePath(existing_profile.ConfigFile)
+			if resolve_error == nil {
+				return resolved_path
+			}
+		}
+	}
+	return ""
 }
 
 // Import imports a WireGuard configuration file

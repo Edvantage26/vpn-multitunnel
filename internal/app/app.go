@@ -32,6 +32,9 @@ type App struct {
 	// Tracks profiles currently in the process of connecting
 	connectingProfiles map[string]bool
 
+	// Tracks the last connection error per profile (cleared on successful connect)
+	lastConnectErrors map[string]string
+
 	// Cache for DNS status checks (to avoid running netstat every 2 seconds)
 	dnsStatusMu          sync.RWMutex
 	dnsStatusPort53Free  bool
@@ -53,6 +56,7 @@ type ProfileStatus struct {
 	BytesRecv     uint64 `json:"bytesRecv"`
 	LastHandshake string `json:"lastHandshake"`
 	Endpoint      string `json:"endpoint"`
+	LastError     string `json:"lastError,omitempty"`
 }
 
 // WireGuardConfigDisplay represents WireGuard config metadata for UI display
@@ -74,6 +78,7 @@ type WireGuardConfigDisplay struct {
 func New() *App {
 	return &App{
 		connectingProfiles: make(map[string]bool),
+		lastConnectErrors:  make(map[string]string),
 		dnsStatusCacheTTL:  10 * time.Second, // Cache DNS status for 10 seconds
 	}
 }
@@ -175,22 +180,12 @@ func (app *App) Startup(ctx context.Context) {
 	}
 
 	go func() {
-		// Connect profiles sequentially
-		for _, profile := range autoConnectProfiles {
-			if err := app.connectInternal(profile.ID, false); err != nil {
-				log.Printf("Auto-connect failed for %s: %v", profile.Name, err)
-			}
-			app.mu.Lock()
-			delete(app.connectingProfiles, profile.ID)
-			app.mu.Unlock()
-		}
-
-		// If system DNS is already pointing to our proxy (from a previous session),
-		// ensure the DNS proxy is actually listening on port 53.
-		// Always restart because the initial bind at startup may have failed
-		// (e.g., loopback IP didn't exist yet).
+		// Ensure DNS proxy is ready BEFORE auto-connecting profiles.
+		// WireGuard needs to resolve endpoint hostnames (e.g., dokploy.edvantage.dev),
+		// and if system DNS points to our proxy (127.0.0.53) but the proxy isn't
+		// listening yet, the resolution fails with "No such host is known".
 		if cfg.Settings.UsePort53 && cfg.DNSProxy.Enabled && app.networkConfig.IsTransparentDNSConfigured() {
-			log.Printf("System DNS already configured to proxy, ensuring DNS proxy on port 53...")
+			log.Printf("System DNS already configured to proxy, ensuring DNS proxy on port 53 before auto-connect...")
 			// Ensure the loopback IP exists first (needed for binding)
 			dnsAddr := cfg.DNSProxy.GetListenAddress()
 			if dnsAddr != "127.0.0.1" {
@@ -204,6 +199,16 @@ func (app *App) Startup(ctx context.Context) {
 				app.networkConfig.SetDNSv6(active_network_interface, []string{"::1"})
 			}
 			system.FlushDNSCache()
+		}
+
+		// Connect profiles sequentially
+		for _, profile := range autoConnectProfiles {
+			if err := app.connectInternal(profile.ID, false); err != nil {
+				log.Printf("Auto-connect failed for %s: %v", profile.Name, err)
+			}
+			app.mu.Lock()
+			delete(app.connectingProfiles, profile.ID)
+			app.mu.Unlock()
 		}
 
 		// Update tray status after auto-connect

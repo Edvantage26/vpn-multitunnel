@@ -93,7 +93,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
   const [test_port_highlighted_index, setTestPortHighlightedIndex] = useState(0)
   const test_port_container_ref = useRef<HTMLDivElement>(null)
   const [is_testing, setIsTesting] = useState(false)
-  const [test_result, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [test_result, setTestResult] = useState<{ success: boolean; message: string; tested_url: string } | null>(null)
 
   const has_dns_server = imported_profile?.dns?.server ? true : false
 
@@ -256,6 +256,11 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
 
     const port_number = parseInt(test_port_input, 10) || 443
 
+    // Build the full display URL including protocol and port
+    const protocol_prefix = port_number === 443 ? 'https://' : 'http://'
+    const port_display = (port_number === 443 || port_number === 80) ? '' : `:${port_number}`
+    const full_tested_url = `${protocol_prefix}${test_url_input.trim()}${port_display}`
+
     // Auto-add the tested port to profile's tcpProxyPorts
     addPortToProfile(port_number)
 
@@ -263,9 +268,9 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     setTestResult(null)
     try {
       const [success, message] = await window.go.app.App.TestConnection(imported_profile.id, hostname, port_number)
-      setTestResult({ success, message })
+      setTestResult({ success, message, tested_url: full_tested_url })
     } catch (err) {
-      setTestResult({ success: false, message: String(err) })
+      setTestResult({ success: false, message: String(err), tested_url: full_tested_url })
     } finally {
       setIsTesting(false)
     }
@@ -309,7 +314,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
       }
       // Delete the profile
       try {
-        await window.go.app.App.DeleteProfile(imported_profile.id)
+        await window.go.app.App.DeleteProfile(imported_profile.id, true)
       } catch (_err) { /* best effort */ }
     }
     onClose()
@@ -830,7 +835,10 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
                           <div className={`font-medium ${test_result.success ? 'text-green-400' : 'text-red-400'}`}>
                             {test_result.success ? 'Connection successful' : 'Connection failed'}
                           </div>
-                          <div className="text-sm text-dark-400">{test_result.message}</div>
+                          <div className="text-sm text-dark-400">
+                            <code className="bg-dark-800 px-1.5 py-0.5 rounded text-dark-200">{test_result.tested_url}</code>
+                            <span className="ml-2">{test_result.message}</span>
+                          </div>
                         </div>
                       </div>
                     </div>

@@ -14,7 +14,8 @@ declare global {
           DisconnectAll: () => Promise<void>
           ImportConfig: (path: string) => Promise<Profile>
           CreateConfigFromText: (configName: string, configContent: string) => Promise<Profile>
-          DeleteProfile: (id: string) => Promise<void>
+          GetProfileConfigPath: (id: string) => Promise<string>
+          DeleteProfile: (id: string, deleteConfigFile: boolean) => Promise<void>
           UpdateProfile: (profile: Profile) => Promise<void>
           GetEnvVars: (profileId: string) => Promise<string>
           GetAllEnvVars: () => Promise<string>

@@ -38,6 +38,7 @@ export interface ProfileStatus {
   bytesRecv: number
   lastHandshake: string
   endpoint: string
+  lastError?: string
 }
 
 export interface ActiveConnection {
@@ -98,7 +99,8 @@ declare global {
           GetProfile: (id: string) => Promise<Profile>
           Connect: (id: string) => Promise<void>
           Disconnect: (id: string) => Promise<void>
-          DeleteProfile: (id: string) => Promise<void>
+          GetProfileConfigPath: (id: string) => Promise<string>
+          DeleteProfile: (id: string, deleteConfigFile: boolean) => Promise<void>
           ImportConfig: () => Promise<Profile>
           CreateConfigFromText: (configName: string, configContent: string) => Promise<Profile>
           UpdateProfile: (profile: Profile) => Promise<void>
@@ -232,8 +234,21 @@ function App() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this tunnel?')) return
+
+    let shouldDeleteConfigFile = false
     try {
-      await window.go.app.App.DeleteProfile(id)
+      const configFilePath = await window.go.app.App.GetProfileConfigPath(id)
+      if (configFilePath) {
+        shouldDeleteConfigFile = confirm(
+          `Do you also want to delete the VPN config file?\n\n${configFilePath}`
+        )
+      }
+    } catch {
+      // If we can't get the path, just skip the config file deletion prompt
+    }
+
+    try {
+      await window.go.app.App.DeleteProfile(id, shouldDeleteConfigFile)
       showNotification('success', 'Tunnel deleted')
       if (selectedId === id) {
         setSelectedId(undefined)
@@ -295,7 +310,7 @@ function App() {
     <div className="h-screen flex bg-dark-900 text-dark-100">
       {/* Notification */}
       {notification && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded-lg shadow-lg ${
+        <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded-lg shadow-lg select-text cursor-text max-w-lg break-words ${
           notification.type === 'success' ? 'bg-green-600' : 'bg-red-600'
         } text-white`}>
           {notification.message}
