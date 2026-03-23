@@ -1,8 +1,12 @@
 {
   "mcpServers": {
-    "vpn-debug": {
+    "vmt-debug-service": {
       "command": "python",
-      "args": ["utils/mcp/vpn_mcp_server.py"]
+      "args": ["utils/mcp/debug_service.py"]
+    },
+    "vmt-build": {
+      "command": "python",
+      "args": ["utils/mcp/build_server.py"]
     }
   }
 }

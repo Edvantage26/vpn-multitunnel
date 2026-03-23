@@ -49,7 +49,7 @@ class VPNDebugClient:
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765"):
         self.base_url = base_url.rstrip("/")
-        self.client = httpx.Client(timeout=30.0)
+        self.client = httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0))
 
     def _get(self, endpoint: str, params: Optional[dict] = None) -> dict:
         """Make a GET request to the API"""

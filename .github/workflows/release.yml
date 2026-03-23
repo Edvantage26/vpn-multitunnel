@@ -57,6 +57,7 @@ jobs:
       - name: Build NSIS installer
         shell: cmd
         run: |
+          set PATH=%PATH%;C:\Program Files (x86)\NSIS
           cd build\windows\installer
           makensis /DARG_WAILS_AMD64_BINARY=..\..\bin\VPNMultiTunnel.exe project.nsi
 
