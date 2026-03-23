@@ -594,7 +594,12 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "version": {
                         "type": "string",
-                        "description": "Version tag (e.g., 'v1.0.0'). Will be used as the git tag and release name."
+                        "description": "Explicit version tag (e.g., 'v1.1.0'). Mutually exclusive with 'bump'."
+                    },
+                    "bump": {
+                        "type": "string",
+                        "enum": ["major", "minor", "patch"],
+                        "description": "Auto-bump version from current. 'patch': 1.0.1→1.0.2, 'minor': 1.0.1→1.1.0, 'major': 1.0.1→2.0.0. Mutually exclusive with 'version'."
                     },
                     "title": {
                         "type": "string",
@@ -615,7 +620,7 @@ async def list_tools() -> list[Tool]:
                         "default": True
                     }
                 },
-                "required": ["version"]
+                "required": []
             }
         ),
     ]
@@ -1075,8 +1080,7 @@ exit 0
         # create_release doesn't require the API
         if name == "create_release":
             version_tag = arguments.get("version", "")
-            release_title = arguments.get("title", f"VPN MultiTunnel {version_tag}")
-            release_notes = arguments.get("notes", f"Release {version_tag}")
+            bump_type = arguments.get("bump", "")
             is_draft = arguments.get("draft", False)
             should_build = arguments.get("build", True)
 
@@ -1085,8 +1089,50 @@ exit 0
             installer_path = project_root / "build" / "bin" / "VPNMultiTunnel-amd64-installer.exe"
             github_repo = "Edvantage26/vpn-multitunnel"
 
+            # Resolve version from bump or explicit version
+            if bump_type and version_tag:
+                lines.append("❌ Cannot specify both 'version' and 'bump'. Use one or the other.")
+                return [TextContent(type="text", text="\n".join(lines))]
+
+            if bump_type:
+                # Read current version from version.go
+                version_go_path = project_root / "internal" / "app" / "version.go"
+                try:
+                    import re
+                    version_go_content = version_go_path.read_text(encoding="utf-8")
+                    current_match = re.search(r'var AppVersion = "(\d+\.\d+\.\d+)"', version_go_content)
+                    if not current_match:
+                        lines.append("❌ Could not read current version from version.go")
+                        return [TextContent(type="text", text="\n".join(lines))]
+                    current_parts = current_match.group(1).split(".")
+                    major_num = int(current_parts[0])
+                    minor_num = int(current_parts[1])
+                    patch_num = int(current_parts[2])
+
+                    if bump_type == "major":
+                        major_num += 1
+                        minor_num = 0
+                        patch_num = 0
+                    elif bump_type == "minor":
+                        minor_num += 1
+                        patch_num = 0
+                    elif bump_type == "patch":
+                        patch_num += 1
+
+                    semver = f"{major_num}.{minor_num}.{patch_num}"
+                    version_tag = f"v{semver}"
+                    lines.append(f"## Auto-bump: {bump_type} ({current_match.group(1)} → {semver})")
+                    lines.append("")
+                except Exception as read_error:
+                    lines.append(f"❌ Failed to read current version: {read_error}")
+                    return [TextContent(type="text", text="\n".join(lines))]
+            else:
+                semver = version_tag.lstrip("v")
+
+            release_title = arguments.get("title", f"VPN MultiTunnel {version_tag}")
+            release_notes = arguments.get("notes", f"Release {version_tag}")
+
             # Step 0: Update version in all source files, commit and push
-            semver = version_tag.lstrip("v")
             if not semver:
                 lines.append("❌ Version tag is required (e.g., v1.1.0)")
                 return [TextContent(type="text", text="\n".join(lines))]
