@@ -4,6 +4,7 @@ import TunnelDetailPanel, { WireGuardConfigDisplay } from './components/TunnelDe
 import ImportWizard from './components/ImportWizard'
 import SettingsModal from './components/SettingsModal'
 import ConfigFileEditor from './components/ConfigFileEditor'
+import ChangelogModal from './components/ChangelogModal'
 
 // Types matching Go backend
 export interface Profile {
@@ -145,6 +146,7 @@ ReorderProfiles: (orderedIDs: string[]) => Promise<void>
           ExportConfiguration: () => Promise<void>
           ImportConfiguration: () => Promise<void>
           CheckForUpdates: () => Promise<UpdateInfo>
+          ForceCheckForUpdates: () => Promise<UpdateInfo>
           DownloadAndInstallUpdate: () => Promise<void>
           GetAppVersion: () => Promise<string>
         }
@@ -167,6 +169,7 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
+  const [showChangelogModal, setShowChangelogModal] = useState(false)
 
   const showNotification = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message })
@@ -395,6 +398,7 @@ function App() {
         updateInfo={updateInfo}
         updateDownloading={updateDownloading}
         onUpdateInstall={handleUpdateInstall}
+        onOpenChangelog={() => setShowChangelogModal(true)}
       />
 
       {/* Main Content */}
@@ -450,6 +454,16 @@ function App() {
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}
+          onOpenChangelog={() => setShowChangelogModal(true)}
+        />
+      )}
+
+      {showChangelogModal && updateInfo && updateInfo.available && (
+        <ChangelogModal
+          updateInfo={updateInfo}
+          updateDownloading={updateDownloading}
+          onUpdateInstall={handleUpdateInstall}
+          onClose={() => setShowChangelogModal(false)}
         />
       )}
 

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import type { Settings, SystemStatus, UpdateSettingsResult } from '../App'
+import type { Settings, SystemStatus, UpdateSettingsResult, UpdateInfo } from '../App'
 
 interface SettingsModalProps {
   onClose: () => void
+  onOpenChangelog: () => void
 }
 
 interface DNSTestDetails {
@@ -13,9 +14,9 @@ interface DNSTestDetails {
   error: string
 }
 
-type SettingsTab = 'general' | 'dns'
+type SettingsTab = 'general' | 'dns' | 'about'
 
-function SettingsModal({ onClose }: SettingsModalProps) {
+function SettingsModal({ onClose, onOpenChangelog }: SettingsModalProps) {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [appPath, setAppPath] = useState('')
   const [loading, setLoading] = useState(true)
@@ -32,6 +33,10 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const [saveResult, setSaveResult] = useState<UpdateSettingsResult | null>(null)
   const [exportLoading, setExportLoading] = useState(false)
   const [importLoading, setImportLoading] = useState(false)
+  const [aboutAppVersion, setAboutAppVersion] = useState('')
+  const [aboutUpdateInfo, setAboutUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [aboutUpdateChecking, setAboutUpdateChecking] = useState(false)
+  const [aboutUpdateCheckError, setAboutUpdateCheckError] = useState('')
 
   useEffect(() => {
     loadSettings()
@@ -39,11 +44,13 @@ function SettingsModal({ onClose }: SettingsModalProps) {
 
   const loadSettings = async () => {
     try {
-      const [loaded_settings, loaded_app_path, loaded_dns_status, loaded_profiles] = await Promise.all([
+      const [loaded_settings, loaded_app_path, loaded_dns_status, loaded_profiles, loaded_app_version, loaded_cached_update] = await Promise.all([
         window.go.app.App.GetSettings(),
         window.go.app.App.GetAppPath(),
         window.go.app.App.GetSystemStatus(),
         window.go.app.App.GetProfiles(),
+        window.go.app.App.GetAppVersion(),
+        window.go.app.App.CheckForUpdates().catch(() => null),
       ])
       const typed_settings = loaded_settings as Settings
       setSettings(typed_settings)
@@ -53,6 +60,10 @@ function SettingsModal({ onClose }: SettingsModalProps) {
       setDnsStatus(loaded_dns_status)
       const active_count = (loaded_profiles || []).filter((profile_status: { connected: boolean }) => profile_status.connected).length
       setConnectedTunnelCount(active_count)
+      setAboutAppVersion(loaded_app_version)
+      if (loaded_cached_update && loaded_cached_update.available) {
+        setAboutUpdateInfo(loaded_cached_update)
+      }
     } catch (load_error) {
       setError(String(load_error))
     } finally {
@@ -136,6 +147,20 @@ function SettingsModal({ onClose }: SettingsModalProps) {
     }
   }
 
+  const handleForceCheckForUpdates = async () => {
+    setAboutUpdateChecking(true)
+    setAboutUpdateCheckError('')
+    setAboutUpdateInfo(null)
+    try {
+      const fresh_update_info = await window.go.app.App.ForceCheckForUpdates()
+      setAboutUpdateInfo(fresh_update_info)
+    } catch (check_error) {
+      setAboutUpdateCheckError(String(check_error))
+    } finally {
+      setAboutUpdateChecking(false)
+    }
+  }
+
   const handleImportConfiguration = async () => {
     const confirmed = window.confirm(
       'This will disconnect all active tunnels and replace your entire configuration (profiles, settings, and config files).\n\nA backup of your current config.json will be saved as config.json.bak.\n\nContinue?'
@@ -169,6 +194,7 @@ function SettingsModal({ onClose }: SettingsModalProps) {
   const tabs: { tab_id: SettingsTab; tab_label: string }[] = [
     { tab_id: 'general', tab_label: 'General' },
     { tab_id: 'dns', tab_label: 'DNS Proxy' },
+    { tab_id: 'about', tab_label: 'About' },
   ]
 
   const dns_address_changed = settings.dnsListenAddress !== originalDnsListenAddress
@@ -501,6 +527,72 @@ function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
             </div>
           )}
+
+          {/* About Tab */}
+          {activeTab === 'about' && (
+            <div className="space-y-5">
+              {/* App Info */}
+              <div className="text-center py-4">
+                <h3 className="text-lg font-bold text-white">VPN MultiTunnel</h3>
+                <p className="text-sm text-dark-400 mt-1">
+                  Version <span className="text-dark-200 font-mono">{aboutAppVersion}</span>
+                </p>
+              </div>
+
+              {/* Update Section */}
+              <div className="bg-dark-800 border border-dark-600 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-dark-200">Software Updates</h4>
+                  <button
+                    onClick={handleForceCheckForUpdates}
+                    disabled={aboutUpdateChecking}
+                    className="btn btn-secondary text-xs px-3 py-1.5 disabled:opacity-50"
+                  >
+                    {aboutUpdateChecking ? 'Checking...' : 'Check for updates'}
+                  </button>
+                </div>
+
+                {/* Error */}
+                {aboutUpdateCheckError && (
+                  <div className="p-3 bg-red-900/50 border border-red-700 rounded text-red-200 text-sm">
+                    {aboutUpdateCheckError}
+                  </div>
+                )}
+
+                {/* Update available */}
+                {aboutUpdateInfo?.available ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-primary-400" />
+                      <p className="text-sm text-dark-200">
+                        v{aboutUpdateInfo.currentVersion}
+                        <span className="text-dark-500 mx-1">&rarr;</span>
+                        <span className="text-primary-400 font-mono">v{aboutUpdateInfo.latestVersion}</span>
+                      </p>
+                    </div>
+                    <button
+                      onClick={onOpenChangelog}
+                      className="text-sm text-primary-400 hover:text-primary-300 underline underline-offset-2"
+                    >
+                      View details &amp; update
+                    </button>
+                  </div>
+                ) : aboutUpdateInfo && !aboutUpdateInfo.available ? (
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <p className="text-sm text-green-300">You're up to date</p>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Credits */}
+              <div className="text-center text-xs text-dark-500 pt-2">
+                <p>&copy; {new Date().getFullYear()} Edvantage</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer (fixed) */}
@@ -512,15 +604,17 @@ function SettingsModal({ onClose }: SettingsModalProps) {
           </div>
           <div className="flex gap-3">
             <button onClick={onClose} className="btn btn-secondary">
-              Cancel
+              {activeTab === 'about' ? 'Close' : 'Cancel'}
             </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="btn btn-primary disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Settings'}
-            </button>
+            {activeTab !== 'about' && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="btn btn-primary disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Save Settings'}
+              </button>
+            )}
           </div>
         </div>
       </div>

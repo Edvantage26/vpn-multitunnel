@@ -253,6 +253,35 @@ func (app *App) CheckForUpdates() UpdateInfo {
 	return *fresh_info
 }
 
+// ForceCheckForUpdates always fetches fresh update info from GitHub, bypassing the cache.
+// Exposed to the frontend via Wails bindings.
+func (app *App) ForceCheckForUpdates() (UpdateInfo, error) {
+	log.Printf("[updater] Force-checking for updates (current: v%s)...", AppVersion)
+
+	fresh_info, fetch_error := app.fetchUpdateInfo()
+	if fetch_error != nil {
+		log.Printf("[updater] ForceCheckForUpdates failed: %v", fetch_error)
+		return UpdateInfo{
+			Available:      false,
+			CurrentVersion: AppVersion,
+			LatestVersion:  AppVersion,
+		}, fetch_error
+	}
+
+	app.updateInfoMu.Lock()
+	app.latestUpdateInfo = fresh_info
+	app.updateInfoMu.Unlock()
+
+	if fresh_info.Available {
+		log.Printf("[updater] Force check found update: v%s -> v%s", fresh_info.CurrentVersion, fresh_info.LatestVersion)
+		runtime.EventsEmit(app.ctx, "update-available", fresh_info)
+	} else {
+		log.Printf("[updater] Force check: no update available")
+	}
+
+	return *fresh_info, nil
+}
+
 // GetAppVersion returns the current application version.
 func (app *App) GetAppVersion() string {
 	return AppVersion

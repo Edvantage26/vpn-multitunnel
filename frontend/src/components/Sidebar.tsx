@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { ProfileStatus, UpdateInfo, ReleaseEntry } from '../App'
+import { ProfileStatus, UpdateInfo } from '../App'
 
 interface SidebarProps {
   profiles: ProfileStatus[]
@@ -12,6 +12,7 @@ interface SidebarProps {
   updateInfo?: UpdateInfo | null
   updateDownloading?: boolean
   onUpdateInstall?: () => void
+  onOpenChangelog?: () => void
 }
 
 function Sidebar({
@@ -25,12 +26,12 @@ function Sidebar({
   updateInfo,
   updateDownloading,
   onUpdateInstall,
+  onOpenChangelog,
 }: SidebarProps) {
   const connectedCount = profiles.filter(profile => profile.connected).length
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [dropPosition, setDropPosition] = useState<'above' | 'below' | null>(null)
-  const [showChangelogModal, setShowChangelogModal] = useState(false)
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map())
 
   const handleDragStart = (event: React.DragEvent, profileId: string) => {
@@ -181,7 +182,7 @@ function Sidebar({
               </p>
               <div className="flex items-center justify-between mt-1.5">
                 <button
-                  onClick={() => setShowChangelogModal(true)}
+                  onClick={() => onOpenChangelog?.()}
                   className="text-xs text-primary-400 hover:text-primary-300"
                 >
                   + info
@@ -227,59 +228,6 @@ function Sidebar({
         </div>
       </div>
 
-      {/* Changelog Modal */}
-      {showChangelogModal && updateInfo?.releases && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-dark-800 border border-dark-700 rounded-xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col">
-            <div className="p-4 border-b border-dark-700 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">What's New</h2>
-              <button
-                onClick={() => setShowChangelogModal(false)}
-                className="text-dark-400 hover:text-dark-200 text-xl leading-none"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-auto p-4 space-y-4">
-              {updateInfo.releases.map((release: ReleaseEntry) => (
-                <div key={release.version} className="border-b border-dark-700/50 pb-4 last:border-0">
-                  <div className="flex items-baseline justify-between mb-1">
-                    <h3 className="text-sm font-semibold text-primary-400">v{release.version}</h3>
-                    {release.publishedAt && (
-                      <span className="text-xs text-dark-500">
-                        {new Date(release.publishedAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                  {release.name && release.name !== `v${release.version}` && (
-                    <p className="text-sm text-dark-200 mb-1">{release.name}</p>
-                  )}
-                  {release.notes && (
-                    <p className="text-xs text-dark-400 whitespace-pre-wrap">{release.notes}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="p-4 border-t border-dark-700 flex justify-end gap-2">
-              <button
-                onClick={() => setShowChangelogModal(false)}
-                className="btn btn-secondary text-sm"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => { setShowChangelogModal(false); onUpdateInstall?.() }}
-                disabled={updateDownloading}
-                className="btn btn-primary text-sm disabled:opacity-50"
-              >
-                {updateDownloading ? 'Downloading...' : 'Update Now'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   )
 }
