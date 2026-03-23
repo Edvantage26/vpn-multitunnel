@@ -588,7 +588,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="create_release",
-            description="Build the installer and create a GitHub Release on Edvantage26/vpn-multitunnel. Uploads the NSIS installer as a release asset. Optionally skips the build step if the installer is already built.",
+            description="Bump version, commit, tag, and push to trigger a GitHub Actions release build. The workflow builds the installer and creates the GitHub Release automatically.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -600,24 +600,6 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "enum": ["major", "minor", "patch"],
                         "description": "Auto-bump version from current. 'patch': 1.0.1→1.0.2, 'minor': 1.0.1→1.1.0, 'major': 1.0.1→2.0.0. Mutually exclusive with 'version'."
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Release title (default: 'VPN MultiTunnel <version>')"
-                    },
-                    "notes": {
-                        "type": "string",
-                        "description": "Release notes in markdown (default: auto-generated from version)"
-                    },
-                    "draft": {
-                        "type": "boolean",
-                        "description": "Create as draft release (default: false)",
-                        "default": False
-                    },
-                    "build": {
-                        "type": "boolean",
-                        "description": "Build the installer before creating the release (default: true). Set to false if already built.",
-                        "default": True
                     }
                 },
                 "required": []
@@ -1081,13 +1063,9 @@ exit 0
         if name == "create_release":
             version_tag = arguments.get("version", "")
             bump_type = arguments.get("bump", "")
-            is_draft = arguments.get("draft", False)
-            should_build = arguments.get("build", True)
 
-            lines = ["# Creating GitHub Release", ""]
+            lines = ["# Creating Release Tag", ""]
             project_root = Path(__file__).parent.parent.parent
-            installer_path = project_root / "build" / "bin" / "VPNMultiTunnel-amd64-installer.exe"
-            github_repo = "Edvantage26/vpn-multitunnel"
 
             # Resolve version from bump or explicit version
             if bump_type and version_tag:
@@ -1129,15 +1107,12 @@ exit 0
             else:
                 semver = version_tag.lstrip("v")
 
-            release_title = arguments.get("title", f"VPN MultiTunnel {version_tag}")
-            release_notes = arguments.get("notes", f"Release {version_tag}")
-
-            # Step 0: Update version in all source files, commit and push
             if not semver:
-                lines.append("❌ Version tag is required (e.g., v1.1.0)")
+                lines.append("❌ Version is required. Use 'version' (e.g., v1.1.0) or 'bump' (patch/minor/major).")
                 return [TextContent(type="text", text="\n".join(lines))]
 
-            lines.append(f"## Step 0: Updating version to {semver}...")
+            # Step 1: Update version in all source files
+            lines.append(f"## Step 1: Updating version to {semver}...")
 
             version_files_updated = []
             try:
@@ -1175,7 +1150,16 @@ exit 0
 
                 lines.append(f"- Updated: {', '.join(version_files_updated)}")
 
-                # Git commit and push
+            except Exception as version_error:
+                lines.append(f"❌ Version update failed: {version_error}")
+                return [TextContent(type="text", text="\n".join(lines))]
+
+            lines.append("")
+
+            # Step 2: Git commit, tag, and push
+            lines.append("## Step 2: Committing and tagging...")
+
+            try:
                 subprocess.run(
                     ["git", "add"] + version_files_updated,
                     cwd=str(project_root), capture_output=True, text=True, timeout=10
@@ -1189,6 +1173,18 @@ exit 0
                 else:
                     lines.append(f"- Git commit: skipped ({commit_result.stdout.strip() or 'no changes'})")
 
+                # Create annotated tag
+                tag_result = subprocess.run(
+                    ["git", "tag", "-a", version_tag, "-m", f"Release {version_tag}"],
+                    cwd=str(project_root), capture_output=True, text=True, timeout=10
+                )
+                if tag_result.returncode == 0:
+                    lines.append(f"- Git tag {version_tag}: OK")
+                else:
+                    lines.append(f"❌ Git tag failed: {tag_result.stderr.strip()}")
+                    return [TextContent(type="text", text="\n".join(lines))]
+
+                # Push commit and tag
                 push_result = subprocess.run(
                     ["git", "push"],
                     cwd=str(project_root), capture_output=True, text=True, timeout=30
@@ -1198,141 +1194,25 @@ exit 0
                 else:
                     lines.append(f"⚠️ Git push failed: {push_result.stderr.strip()}")
 
-            except Exception as version_error:
-                lines.append(f"❌ Version update failed: {version_error}")
-                return [TextContent(type="text", text="\n".join(lines))]
-
-            lines.append("")
-
-            # Step 1: Build installer (optional)
-            if should_build:
-                lines.append("## Step 1: Building installer...")
-                nsis_path = Path("C:/Program Files (x86)/NSIS/makensis.exe")
-
-                # Build app
-                try:
-                    build_result = subprocess.run(
-                        ["wails", "build"],
-                        cwd=str(project_root),
-                        capture_output=True,
-                        text=True,
-                        timeout=300
-                    )
-                    if build_result.returncode != 0:
-                        error_output = build_result.stderr.strip() or build_result.stdout.strip()
-                        if len(error_output) > 500:
-                            error_output = error_output[:500] + "..."
-                        lines.append(f"❌ App build failed:\n```\n{error_output}\n```")
-                        return [TextContent(type="text", text="\n".join(lines))]
-                    lines.append("- App build: OK")
-                except Exception as build_error:
-                    lines.append(f"❌ App build error: {build_error}")
-                    return [TextContent(type="text", text="\n".join(lines))]
-
-                # Build service
-                try:
-                    service_result = subprocess.run(
-                        ["go", "build", "-o", "build/bin/VPNMultiTunnel-service.exe", "./cmd/service"],
-                        cwd=str(project_root),
-                        capture_output=True,
-                        text=True,
-                        timeout=120
-                    )
-                    if service_result.returncode != 0:
-                        lines.append(f"❌ Service build failed:\n```\n{service_result.stderr.strip()}\n```")
-                        return [TextContent(type="text", text="\n".join(lines))]
-                    lines.append("- Service build: OK")
-                except Exception as service_error:
-                    lines.append(f"❌ Service build error: {service_error}")
-                    return [TextContent(type="text", text="\n".join(lines))]
-
-                # Run NSIS
-                if not nsis_path.exists():
-                    lines.append(f"❌ NSIS not found at {nsis_path}")
-                    return [TextContent(type="text", text="\n".join(lines))]
-
-                try:
-                    app_exe = project_root / "build" / "bin" / "VPNMultiTunnel.exe"
-                    nsi_script = project_root / "build" / "windows" / "installer" / "project.nsi"
-                    nsis_result = subprocess.run(
-                        [str(nsis_path), f"/DARG_WAILS_AMD64_BINARY={app_exe}", str(nsi_script)],
-                        capture_output=True,
-                        text=True,
-                        timeout=120
-                    )
-                    if nsis_result.returncode != 0:
-                        lines.append(f"❌ NSIS failed:\n```\n{nsis_result.stderr.strip() or nsis_result.stdout.strip()}\n```")
-                        return [TextContent(type="text", text="\n".join(lines))]
-                    lines.append("- Installer created: OK")
-                except Exception as nsis_error:
-                    lines.append(f"❌ NSIS error: {nsis_error}")
-                    return [TextContent(type="text", text="\n".join(lines))]
-
-                lines.append("")
-            else:
-                lines.append("## Step 1: Skipping build (build=false)")
-                lines.append("")
-
-            # Step 2: Verify installer exists
-            lines.append("## Step 2: Verifying installer...")
-            if not installer_path.exists():
-                lines.append(f"❌ Installer not found at `{installer_path}`")
-                lines.append("Run `build_installer` first or set build=true")
-                return [TextContent(type="text", text="\n".join(lines))]
-
-            installer_size_mb = installer_path.stat().st_size / (1024 * 1024)
-            lines.append(f"- Installer: `{installer_path.name}` ({installer_size_mb:.1f} MB)")
-            lines.append("")
-
-            # Step 3: Check gh CLI
-            lines.append("## Step 3: Creating GitHub Release...")
-            try:
-                gh_check = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=10)
-                if gh_check.returncode != 0:
-                    lines.append("❌ GitHub CLI not authenticated. Run `gh auth login` first.")
-                    return [TextContent(type="text", text="\n".join(lines))]
-            except FileNotFoundError:
-                lines.append("❌ GitHub CLI (gh) not found. Install from https://cli.github.com/")
-                return [TextContent(type="text", text="\n".join(lines))]
-
-            # Step 4: Create release
-            gh_command = [
-                "gh", "release", "create", version_tag,
-                "--repo", github_repo,
-                "--title", release_title,
-                "--notes", release_notes,
-                str(installer_path)
-            ]
-            if is_draft:
-                gh_command.insert(4, "--draft")
-
-            try:
-                release_result = subprocess.run(
-                    gh_command,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    cwd=str(project_root)
+                push_tag_result = subprocess.run(
+                    ["git", "push", "origin", version_tag],
+                    cwd=str(project_root), capture_output=True, text=True, timeout=30
                 )
-                if release_result.returncode != 0:
-                    error_msg = release_result.stderr.strip() or release_result.stdout.strip()
-                    lines.append(f"❌ Release creation failed:\n```\n{error_msg}\n```")
+                if push_tag_result.returncode == 0:
+                    lines.append(f"- Git push tag {version_tag}: OK")
+                else:
+                    lines.append(f"❌ Tag push failed: {push_tag_result.stderr.strip()}")
                     return [TextContent(type="text", text="\n".join(lines))]
 
-                release_url = release_result.stdout.strip()
-                lines.append(f"Release created successfully!")
-                lines.append("")
-                lines.append("## Summary")
-                lines.append(f"- Version: **{version_tag}**")
-                lines.append(f"- Title: {release_title}")
-                lines.append(f"- Draft: {'Yes' if is_draft else 'No'}")
-                lines.append(f"- Asset: `{installer_path.name}` ({installer_size_mb:.1f} MB)")
-                lines.append(f"- URL: {release_url}")
+            except Exception as git_error:
+                lines.append(f"❌ Git operation failed: {git_error}")
+                return [TextContent(type="text", text="\n".join(lines))]
 
-            except subprocess.TimeoutExpired:
-                lines.append("❌ Release creation timed out (120s)")
-            except Exception as release_error:
-                lines.append(f"❌ Error: {release_error}")
+            lines.append("")
+            lines.append("## Summary")
+            lines.append(f"- Version: **{version_tag}**")
+            lines.append(f"- GitHub Actions will now build the installer and create the release")
+            lines.append(f"- Monitor: https://github.com/Edvantage26/vpn-multitunnel/actions")
 
             return [TextContent(type="text", text="\n".join(lines))]
 
