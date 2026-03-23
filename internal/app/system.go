@@ -23,11 +23,13 @@ func (app *App) GetSystemStatus() map[string]interface{} {
 		dnsConfigured = app.networkConfig.IsTransparentDNSConfigured()
 	}
 
-	// Get current system DNS
+	// Get current system DNS and active interface
 	currentDNS := ""
+	activeInterface := ""
 	if app.networkConfig != nil {
 		interfaceName, err := app.networkConfig.GetActiveNetworkInterface()
 		if err == nil {
+			activeInterface = interfaceName
 			dnsServers, err := app.networkConfig.GetCurrentDNS(interfaceName)
 			if err == nil && len(dnsServers) > 0 {
 				currentDNS = dnsServers[0]
@@ -56,6 +58,9 @@ func (app *App) GetSystemStatus() map[string]interface{} {
 		"tcpProxyEnabled":       app.config.TCPProxy.Enabled,
 		"dnsProxyEnabled":       app.config.DNSProxy.Enabled,
 		"dnsProxyPort":          app.config.DNSProxy.ListenPort,
+		"activeInterface":       activeInterface,
+		"dnsIssue":              app.dnsHealthIssue,
+		"appVersion":            AppVersion,
 	}
 }
 

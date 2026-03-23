@@ -3,11 +3,14 @@ package system
 import (
 	"fmt"
 	"log"
+	"net"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 
 	"vpnmultitunnel/internal/ipc"
 )
@@ -272,8 +275,15 @@ func (network_config *NetworkConfig) CleanupLoopbackIPs() {
 }
 
 // GetActiveNetworkInterface returns the name of the primary network interface
+// Uses the Win32 IP Helper API (GetBestRoute) instead of PowerShell for instant results.
 func (network_config *NetworkConfig) GetActiveNetworkInterface() (string, error) {
-	// Use PowerShell to get the active interface
+	interfaceName, nativeErr := getActiveInterfaceNative()
+	if nativeErr == nil && interfaceName != "" {
+		return interfaceName, nil
+	}
+
+	// Fallback to PowerShell if native API fails
+	log.Printf("Native GetActiveNetworkInterface failed (%v), falling back to PowerShell", nativeErr)
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command",
 		"Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Select-Object -ExpandProperty InterfaceAlias | Select-Object -First 1")
 	hideWindow(cmd)
@@ -284,8 +294,128 @@ func (network_config *NetworkConfig) GetActiveNetworkInterface() (string, error)
 	return strings.TrimSpace(string(output)), nil
 }
 
-// GetCurrentDNS gets the current IPv4 DNS servers for an interface
+// getActiveInterfaceNative uses Win32 GetBestRoute + ConvertInterfaceLuidToAlias to find
+// the primary network interface without spawning PowerShell.
+func getActiveInterfaceNative() (string, error) {
+	iphlpapi := syscall.NewLazyDLL("iphlpapi.dll")
+	procGetBestRoute := iphlpapi.NewProc("GetBestRoute")
+	procConvertInterfaceIndexToLuid := iphlpapi.NewProc("ConvertInterfaceIndexToLuid")
+	procConvertInterfaceLuidToAlias := iphlpapi.NewProc("ConvertInterfaceLuidToAlias")
+
+	// MIB_IPFORWARDROW structure (used by GetBestRoute)
+	type mibIpForwardRow struct {
+		ForwardDest      uint32
+		ForwardMask      uint32
+		ForwardPolicy    uint32
+		ForwardNextHop   uint32
+		ForwardIfIndex   uint32
+		ForwardType      uint32
+		ForwardProto     uint32
+		ForwardAge       uint32
+		ForwardNextHopAS uint32
+		ForwardMetric1   uint32
+		ForwardMetric2   uint32
+		ForwardMetric3   uint32
+		ForwardMetric4   uint32
+		ForwardMetric5   uint32
+	}
+
+	var bestRoute mibIpForwardRow
+	// GetBestRoute(0.0.0.0, 0.0.0.0) finds the default route
+	returnCode, _, _ := procGetBestRoute.Call(0, 0, uintptr(unsafe.Pointer(&bestRoute)))
+	if returnCode != 0 {
+		return "", fmt.Errorf("GetBestRoute failed with code %d", returnCode)
+	}
+
+	// Convert interface index to LUID
+	var interfaceLuid uint64
+	returnCode, _, _ = procConvertInterfaceIndexToLuid.Call(
+		uintptr(bestRoute.ForwardIfIndex),
+		uintptr(unsafe.Pointer(&interfaceLuid)),
+	)
+	if returnCode != 0 {
+		return "", fmt.Errorf("ConvertInterfaceIndexToLuid failed with code %d", returnCode)
+	}
+
+	// Convert LUID to alias (interface name)
+	aliasBuffer := make([]uint16, 256)
+	returnCode, _, _ = procConvertInterfaceLuidToAlias.Call(
+		uintptr(unsafe.Pointer(&interfaceLuid)),
+		uintptr(unsafe.Pointer(&aliasBuffer[0])),
+		256,
+	)
+	if returnCode != 0 {
+		return "", fmt.Errorf("ConvertInterfaceLuidToAlias failed with code %d", returnCode)
+	}
+
+	return syscall.UTF16ToString(aliasBuffer), nil
+}
+
+// getDNSServersNative uses the Win32 GetAdaptersAddresses API to retrieve DNS server
+// addresses for a given interface name without spawning PowerShell.
+// When ipv6Only is true, returns only IPv6 addresses; otherwise only IPv4.
+func getDNSServersNative(interfaceName string, ipv6Only bool) ([]string, error) {
+	// GAA_FLAG_SKIP_UNICAST | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST
+	const gaaFlags = 0x0001 | 0x0002 | 0x0004
+
+	// First call to get required buffer size
+	var bufferSize uint32
+	windows.GetAdaptersAddresses(syscall.AF_UNSPEC, gaaFlags, 0, nil, &bufferSize)
+
+	if bufferSize == 0 {
+		return nil, fmt.Errorf("GetAdaptersAddresses returned zero buffer size")
+	}
+
+	adapterBuffer := make([]byte, bufferSize)
+	firstAdapter := (*windows.IpAdapterAddresses)(unsafe.Pointer(&adapterBuffer[0]))
+
+	getAdaptersErr := windows.GetAdaptersAddresses(syscall.AF_UNSPEC, gaaFlags, 0, firstAdapter, &bufferSize)
+	if getAdaptersErr != nil {
+		return nil, fmt.Errorf("GetAdaptersAddresses failed: %w", getAdaptersErr)
+	}
+
+	for currentAdapter := firstAdapter; currentAdapter != nil; currentAdapter = currentAdapter.Next {
+		currentFriendlyName := syscall.UTF16ToString((*[256]uint16)(unsafe.Pointer(currentAdapter.FriendlyName))[:])
+
+		if currentFriendlyName != interfaceName {
+			continue
+		}
+
+		// Found our interface — collect DNS server addresses
+		var dnsServerList []string
+		for dnsServer := currentAdapter.FirstDnsServerAddress; dnsServer != nil; dnsServer = dnsServer.Next {
+			sockaddrPtr := dnsServer.Address.Sockaddr
+			if sockaddrPtr == nil {
+				continue
+			}
+			addressFamily := *(*uint16)(unsafe.Pointer(sockaddrPtr))
+
+			if addressFamily == syscall.AF_INET && !ipv6Only {
+				ipBytes := (*[4]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(sockaddrPtr)) + 4))
+				ipAddress := fmt.Sprintf("%d.%d.%d.%d", ipBytes[0], ipBytes[1], ipBytes[2], ipBytes[3])
+				dnsServerList = append(dnsServerList, ipAddress)
+			} else if addressFamily == syscall.AF_INET6 && ipv6Only {
+				ipBytes := (*[16]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(sockaddrPtr)) + 8))
+				ipAddress := net.IP(ipBytes[:]).String()
+				dnsServerList = append(dnsServerList, ipAddress)
+			}
+		}
+		return dnsServerList, nil
+	}
+
+	return []string{}, nil
+}
+
+// GetCurrentDNS gets the current IPv4 DNS servers for an interface.
+// Uses the Win32 GetAdaptersAddresses API instead of PowerShell for instant results.
 func (network_config *NetworkConfig) GetCurrentDNS(interfaceName string) ([]string, error) {
+	dnsServers, nativeErr := getDNSServersNative(interfaceName, false)
+	if nativeErr == nil {
+		return dnsServers, nil
+	}
+
+	// Fallback to PowerShell if native API fails
+	log.Printf("Native GetCurrentDNS failed (%v), falling back to PowerShell", nativeErr)
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command",
 		fmt.Sprintf("(Get-DnsClientServerAddress -InterfaceAlias '%s' -AddressFamily IPv4).ServerAddresses -join ','", interfaceName))
 	hideWindow(cmd)
@@ -301,8 +431,16 @@ func (network_config *NetworkConfig) GetCurrentDNS(interfaceName string) ([]stri
 	return strings.Split(result, ","), nil
 }
 
-// GetCurrentDNSv6 gets the current IPv6 DNS servers for an interface
+// GetCurrentDNSv6 gets the current IPv6 DNS servers for an interface.
+// Uses the Win32 GetAdaptersAddresses API instead of PowerShell for instant results.
 func (network_config *NetworkConfig) GetCurrentDNSv6(interfaceName string) ([]string, error) {
+	dnsServers, nativeErr := getDNSServersNative(interfaceName, true)
+	if nativeErr == nil {
+		return dnsServers, nil
+	}
+
+	// Fallback to PowerShell if native API fails
+	log.Printf("Native GetCurrentDNSv6 failed (%v), falling back to PowerShell", nativeErr)
 	cmd := exec.Command("powershell", "-WindowStyle", "Hidden", "-Command",
 		fmt.Sprintf("(Get-DnsClientServerAddress -InterfaceAlias '%s' -AddressFamily IPv6).ServerAddresses -join ','", interfaceName))
 	hideWindow(cmd)

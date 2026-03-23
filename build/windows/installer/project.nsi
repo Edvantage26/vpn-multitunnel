@@ -152,19 +152,25 @@ Section
     DetailPrint "Creating configuration files..."
     CreateDirectory "$INSTDIR\configs"
 
-    # Create default config.json
-    FileOpen $0 "$INSTDIR\config.json" w
-    FileWrite $0 '{"version":1,"settings":{"logLevel":"info","autoConnect":[],"portRangeStart":10800,"minimizeToTray":true,"startMinimized":false,"autoConfigureLoopback":true,"autoConfigureDNS":true,"usePort53":true,"useService":true,"debugApiEnabled":true,"debugApiPort":8765,"logBufferSize":10000,"errorBufferSize":1000,"metricsEnabled":true},"profiles":[],"dnsProxy":{"enabled":false,"listenPort":10053,"rules":[],"fallback":"system"},"tcpProxy":{"enabled":false,"tunnelIPs":{},"ports":[80,443,8080,8443,3000,4000,5000,5432,3306,6379,27017,1433,11211,9200]}}'
-    FileClose $0
+    # Create default config.json only if it doesn't exist (preserve user config on upgrades)
+    IfFileExists "$INSTDIR\config.json" skip_config_creation
+        FileOpen $0 "$INSTDIR\config.json" w
+        FileWrite $0 '{"version":1,"settings":{"logLevel":"info","autoConnect":[],"portRangeStart":10800,"minimizeToTray":true,"startMinimized":false,"autoConfigureLoopback":true,"autoConfigureDNS":true,"usePort53":true,"useService":true,"debugApiEnabled":true,"debugApiPort":8765,"logBufferSize":10000,"errorBufferSize":1000,"metricsEnabled":true},"profiles":[],"dnsProxy":{"enabled":false,"listenPort":10053,"rules":[],"fallback":"system"},"tcpProxy":{"enabled":false,"tunnelIPs":{},"ports":[80,443,8080,8443,3000,4000,5000,5432,3306,6379,27017,1433,11211,9200]}}'
+        FileClose $0
+        nsExec::ExecToLog 'icacls "$INSTDIR\config.json" /grant Users:F'
+    skip_config_creation:
 
-    # Grant write permissions to BUILTIN\Users for configs folder and config.json
+    # Grant write permissions to BUILTIN\Users for configs folder
     DetailPrint "Setting permissions..."
     nsExec::ExecToLog 'icacls "$INSTDIR\configs" /grant Users:(OI)(CI)F'
-    nsExec::ExecToLog 'icacls "$INSTDIR\config.json" /grant Users:F'
 
-    # Configure autostart at login (current user)
-    DetailPrint "Configuring autostart..."
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    # Configure autostart at login via Scheduled Task (more reliable than registry Run key on Windows 11)
+    DetailPrint "Configuring autostart via Scheduled Task..."
+    # Remove legacy registry Run keys if present
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${INFO_PRODUCTNAME}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "VPNMultiTunnel"
+    # Create scheduled task with 10s delay after logon (PowerShell handles current user automatically)
+    nsExec::ExecToLog 'powershell -ExecutionPolicy Bypass -Command "$$action = New-ScheduledTaskAction -Execute \"$INSTDIR\${PRODUCT_EXECUTABLE}\"; $$trigger = New-ScheduledTaskTrigger -AtLogOn -User $$env:USERNAME; $$trigger.Delay = \"PT10S\"; $$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable; Register-ScheduledTask -TaskName \"VPNMultiTunnel Autostart\" -Action $$action -Trigger $$trigger -Settings $$settings -Force"'
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -221,9 +227,11 @@ Section "uninstall"
     nsExec::ExecToLog 'netsh interface ipv4 delete address "Loopback Pseudo-Interface 1" 127.0.9.1'
     nsExec::ExecToLog 'netsh interface ipv4 delete address "Loopback Pseudo-Interface 1" 127.0.10.1'
 
-    # Remove autostart registry entry
+    # Remove autostart configuration (Scheduled Task + legacy registry keys)
     DetailPrint "Removing autostart configuration..."
+    nsExec::ExecToLog 'schtasks /Delete /TN "VPNMultiTunnel Autostart" /F'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${INFO_PRODUCTNAME}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "VPNMultiTunnel"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "VPN MultiClient"
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath

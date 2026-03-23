@@ -39,6 +39,10 @@ func (app *App) GetProfiles() []ProfileStatus {
 				status.Endpoint = stats.Endpoint
 				status.Healthy = stats.Connected
 			}
+			// Surface any DNS health issues to the frontend
+			if app.dnsHealthIssue != "" {
+				status.DNSIssue = app.dnsHealthIssue
+			}
 		}
 
 		result[idx_profile] = status

@@ -8,23 +8,24 @@ import (
 
 const configFileName = "config.json"
 
-// getExeDir returns the directory where the executable is located
-// In development mode (go.mod exists in cwd), returns cwd instead
+// getExeDir returns the directory where the executable is located.
+// In development mode (go.mod exists next to the executable), returns that directory.
+// This avoids the fragile CWD-based detection that could load the wrong config
+// when the process inherits an unrelated working directory containing go.mod.
 func getExeDir() (string, error) {
-	// Check if we're in development mode (go.mod exists in cwd)
-	cwd, err := os.Getwd()
-	if err == nil {
-		if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
-			return cwd, nil
-		}
-	}
-
-	// Production: use executable directory
 	execPath, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Dir(execPath), nil
+	executableDir := filepath.Dir(execPath)
+
+	// Dev mode: check if go.mod exists next to the executable itself.
+	// In wails dev, the temp-built binary is placed in the project directory.
+	if _, statErr := os.Stat(filepath.Join(executableDir, "go.mod")); statErr == nil {
+		return executableDir, nil
+	}
+
+	return executableDir, nil
 }
 
 // getConfigPath returns the path to the config file (always next to exe)
@@ -117,6 +118,11 @@ func Save(cfg *AppConfig) error {
 	}
 
 	return os.WriteFile(configPath, data, 0644)
+}
+
+// GetConfigPath returns the full path to config.json
+func GetConfigPath() (string, error) {
+	return getConfigPath()
 }
 
 // GetConfigDir returns the directory for storing WireGuard configs (always <exe_dir>/configs)

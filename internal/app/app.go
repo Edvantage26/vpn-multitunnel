@@ -41,6 +41,17 @@ type App struct {
 	dnsStatusClientDown  bool
 	dnsStatusCacheTime   time.Time
 	dnsStatusCacheTTL    time.Duration
+
+	// Network monitor state
+	networkMonitorStop       chan struct{}
+	dnsHealthIssue           string
+	lastActiveInterface      string
+	consecutiveDNSFailures   int
+
+	// Update checker state
+	updateCheckerStop  chan struct{}
+	latestUpdateInfo   *UpdateInfo
+	updateInfoMu       sync.RWMutex
 }
 
 // ProfileStatus represents the status of a profile for the UI
@@ -57,6 +68,7 @@ type ProfileStatus struct {
 	LastHandshake string `json:"lastHandshake"`
 	Endpoint      string `json:"endpoint"`
 	LastError     string `json:"lastError,omitempty"`
+	DNSIssue      string `json:"dnsIssue,omitempty"`
 }
 
 // WireGuardConfigDisplay represents WireGuard config metadata for UI display
@@ -213,6 +225,9 @@ func (app *App) Startup(ctx context.Context) {
 
 		// Update tray status after auto-connect
 		app.updateTrayStatus()
+
+		// Start network monitor to detect interface changes and DNS health issues
+		app.startNetworkMonitor()
 	}()
 
 	// Initialize and start the debug API server
@@ -226,6 +241,9 @@ func (app *App) Startup(ctx context.Context) {
 			log.Printf("Warning: Failed to start debug API server: %v", err)
 		}
 	}
+
+	// Start update checker in background
+	app.startUpdateChecker()
 
 	debug.Info("app", "Application started", map[string]any{
 		"debugApiEnabled": cfg.Settings.DebugAPIEnabled,
@@ -260,6 +278,12 @@ func (app *App) configureLoopbackIPs() {
 // Shutdown is called when the app is closing
 func (app *App) Shutdown(ctx context.Context) {
 	debug.Info("app", "Application shutting down", nil)
+
+	// Stop update checker
+	app.stopUpdateChecker()
+
+	// Stop network monitor
+	app.stopNetworkMonitor()
 
 	// Stop debug server
 	if app.debugServer != nil {

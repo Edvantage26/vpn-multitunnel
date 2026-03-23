@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { ProfileStatus } from '../App'
+import { ProfileStatus, UpdateInfo, ReleaseEntry } from '../App'
 
 interface SidebarProps {
   profiles: ProfileStatus[]
@@ -8,6 +8,10 @@ interface SidebarProps {
   onAddProfile: () => void
   onOpenSettings: () => void
   onReorder: (orderedIDs: string[]) => void
+  appVersion?: string
+  updateInfo?: UpdateInfo | null
+  updateDownloading?: boolean
+  onUpdateInstall?: () => void
 }
 
 function Sidebar({
@@ -17,11 +21,16 @@ function Sidebar({
   onAddProfile,
   onOpenSettings,
   onReorder,
+  appVersion,
+  updateInfo,
+  updateDownloading,
+  onUpdateInstall,
 }: SidebarProps) {
   const connectedCount = profiles.filter(profile => profile.connected).length
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   const [dropPosition, setDropPosition] = useState<'above' | 'below' | null>(null)
+  const [showChangelogModal, setShowChangelogModal] = useState(false)
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map())
 
   const handleDragStart = (event: React.DragEvent, profileId: string) => {
@@ -149,8 +158,10 @@ function Sidebar({
                 <div className="w-3 h-3 flex-shrink-0 rounded-full border-2 border-primary-500 border-t-transparent animate-spin" />
               ) : (
                 <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
-                  profile.connected ? 'bg-green-500' : profile.lastError ? 'bg-red-500' : 'bg-dark-500'
-                }`} title={profile.lastError || ''} />
+                  profile.connected
+                    ? (profile.dnsIssue ? 'bg-yellow-500 animate-pulse' : 'bg-green-500')
+                    : profile.lastError ? 'bg-red-500' : 'bg-dark-500'
+                }`} title={profile.dnsIssue || profile.lastError || ''} />
               )}
 
               <span className="font-medium text-dark-100 truncate">{profile.name}</span>
@@ -159,29 +170,116 @@ function Sidebar({
         )}
       </div>
 
-      {/* Footer Actions */}
-      <div className="p-3 border-t border-dark-700">
-        <div className="flex gap-2">
-          <button
-            onClick={onAddProfile}
-            className="flex-1 btn btn-primary text-sm"
-          >
-            + Add tunnel
-          </button>
-          <button
-            onClick={onOpenSettings}
-            className="btn btn-secondary text-sm px-3"
-            title="Settings"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </button>
+      {/* Footer */}
+      <div className="border-t border-dark-700">
+        {/* Version / Update Banner */}
+        <div className="px-3 pt-2 pb-1">
+          {updateInfo?.available ? (
+            <div className="px-3 py-2 bg-primary-900/30 border border-primary-700/50 rounded-lg">
+              <p className="text-xs text-dark-200 font-medium">
+                v{updateInfo.currentVersion} <span className="text-dark-500 mx-1">&rarr;</span> <span className="text-primary-400">v{updateInfo.latestVersion}</span>
+              </p>
+              <div className="flex items-center justify-between mt-1.5">
+                <button
+                  onClick={() => setShowChangelogModal(true)}
+                  className="text-xs text-primary-400 hover:text-primary-300"
+                >
+                  + info
+                </button>
+                <button
+                  onClick={onUpdateInstall}
+                  disabled={updateDownloading}
+                  className="text-xs px-2.5 py-1 bg-primary-600 hover:bg-primary-500 rounded text-white disabled:opacity-50"
+                >
+                  {updateDownloading ? 'Downloading...' : 'Update'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            appVersion && (
+              <p className="text-xs text-dark-500 text-center">v{appVersion}</p>
+            )
+          )}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="px-3 pb-3 pt-1">
+          <div className="flex gap-2">
+            <button
+              onClick={onAddProfile}
+              className="flex-1 btn btn-primary text-sm"
+            >
+              + Add tunnel
+            </button>
+            <button
+              onClick={onOpenSettings}
+              className="btn btn-secondary text-sm px-3"
+              title="Settings"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Changelog Modal */}
+      {showChangelogModal && updateInfo?.releases && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-dark-800 border border-dark-700 rounded-xl shadow-2xl w-[480px] max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b border-dark-700 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-white">What's New</h2>
+              <button
+                onClick={() => setShowChangelogModal(false)}
+                className="text-dark-400 hover:text-dark-200 text-xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-4 space-y-4">
+              {updateInfo.releases.map((release: ReleaseEntry) => (
+                <div key={release.version} className="border-b border-dark-700/50 pb-4 last:border-0">
+                  <div className="flex items-baseline justify-between mb-1">
+                    <h3 className="text-sm font-semibold text-primary-400">v{release.version}</h3>
+                    {release.publishedAt && (
+                      <span className="text-xs text-dark-500">
+                        {new Date(release.publishedAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  {release.name && release.name !== `v${release.version}` && (
+                    <p className="text-sm text-dark-200 mb-1">{release.name}</p>
+                  )}
+                  {release.notes && (
+                    <p className="text-xs text-dark-400 whitespace-pre-wrap">{release.notes}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 border-t border-dark-700 flex justify-end gap-2">
+              <button
+                onClick={() => setShowChangelogModal(false)}
+                className="btn btn-secondary text-sm"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => { setShowChangelogModal(false); onUpdateInstall?.() }}
+                disabled={updateDownloading}
+                className="btn btn-primary text-sm disabled:opacity-50"
+              >
+                {updateDownloading ? 'Downloading...' : 'Update Now'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }

@@ -39,6 +39,7 @@ export interface ProfileStatus {
   lastHandshake: string
   endpoint: string
   lastError?: string
+  dnsIssue?: string
 }
 
 export interface ActiveConnection {
@@ -68,6 +69,8 @@ export interface SystemStatus {
   tcpProxyEnabled: boolean
   dnsProxyEnabled: boolean
   dnsProxyPort: number
+  activeInterface?: string
+  dnsIssue?: string
 }
 
 // DNSConfigResult is imported from wailsjs/go/models.ts (app.DNSConfigResult)
@@ -88,6 +91,21 @@ export interface UpdateSettingsResult {
   systemDNSReconfigured: boolean
   loopbackIPChanged: boolean
   warning?: string
+}
+
+export interface ReleaseEntry {
+  version: string
+  name: string
+  notes: string
+  publishedAt: string
+}
+
+export interface UpdateInfo {
+  available: boolean
+  currentVersion: string
+  latestVersion: string
+  releases: ReleaseEntry[]
+  installerURL: string
 }
 
 declare global {
@@ -124,6 +142,11 @@ declare global {
 ReorderProfiles: (orderedIDs: string[]) => Promise<void>
           GetAppPath: () => Promise<string>
           TestDNSConnectivity: (address: string) => Promise<{ proxyListening: boolean; systemDNSConfigured: boolean; querySuccess: boolean; resolvedIP: string; error: string }>
+          ExportConfiguration: () => Promise<void>
+          ImportConfiguration: () => Promise<void>
+          CheckForUpdates: () => Promise<UpdateInfo>
+          DownloadAndInstallUpdate: () => Promise<void>
+          GetAppVersion: () => Promise<string>
         }
       }
     }
@@ -141,6 +164,9 @@ function App() {
   const [showConfigEditor, setShowConfigEditor] = useState(false)
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [updateDownloading, setUpdateDownloading] = useState(false)
+  const [appVersion, setAppVersion] = useState<string>('')
 
   const showNotification = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message })
@@ -203,6 +229,36 @@ function App() {
       fetchSelectedProfile(selectedId)
     }
   }, [selectedId, fetchSelectedProfile])
+
+  // Fetch app version on mount
+  useEffect(() => {
+    window.go.app.App.GetAppVersion().then(setAppVersion).catch(console.error)
+  }, [])
+
+  // Listen for update-available event from backend
+  useEffect(() => {
+    const handleUpdateAvailable = (...args: unknown[]) => {
+      if (args[0]) setUpdateInfo(args[0] as UpdateInfo)
+    }
+    window.runtime.EventsOn('update-available', handleUpdateAvailable)
+    return () => {
+      window.runtime.EventsOff('update-available')
+    }
+  }, [])
+
+  // Listen for config-imported event from backend (after zip import)
+  useEffect(() => {
+    const handleConfigImported = () => {
+      setSelectedId(undefined)
+      setSelectedProfile(null)
+      fetchProfiles()
+      fetchSystemStatus()
+    }
+    window.runtime.EventsOn('config-imported', handleConfigImported)
+    return () => {
+      window.runtime.EventsOff('config-imported')
+    }
+  }, [fetchProfiles, fetchSystemStatus])
 
   const handleConnect = async (id: string) => {
     console.log('[App] handleConnect called for:', id)
@@ -282,6 +338,16 @@ function App() {
     }
   }
 
+  const handleUpdateInstall = async () => {
+    setUpdateDownloading(true)
+    try {
+      await window.go.app.App.DownloadAndInstallUpdate()
+    } catch (err) {
+      showNotification('error', `Update failed: ${err}`)
+      setUpdateDownloading(false)
+    }
+  }
+
   const handleReorderProfiles = async (orderedIDs: string[]) => {
     // Optimistically reorder in local state
     const profileMap = new Map(profiles.map(profile => [profile.id, profile]))
@@ -325,6 +391,10 @@ function App() {
         onAddProfile={() => setShowAddModal(true)}
         onOpenSettings={() => setShowSettings(true)}
         onReorder={handleReorderProfiles}
+        appVersion={appVersion}
+        updateInfo={updateInfo}
+        updateDownloading={updateDownloading}
+        onUpdateInstall={handleUpdateInstall}
       />
 
       {/* Main Content */}
