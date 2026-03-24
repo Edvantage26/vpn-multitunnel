@@ -2,4 +2,4 @@ package app
 
 // AppVersion is the current application version.
 // When bumping, also update: build/info.json, wails.json
-var AppVersion = "1.0.4"
+var AppVersion = "1.0.5"
