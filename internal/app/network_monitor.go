@@ -85,6 +85,9 @@ func (app *App) networkMonitorTick() {
 	// --- Interface change detection ---
 	app.checkActiveInterfaceChange()
 
+	// --- Auto-repair: DNS should be configured but isn't ---
+	app.ensureSystemDNSConfigured()
+
 	// --- DNS health check ---
 	app.checkDNSHealth()
 }
@@ -144,7 +147,45 @@ func (app *App) reconfigureDNSForNewInterface() {
 	log.Printf("[network-monitor] DNS reconfigured successfully")
 }
 
+// ensureSystemDNSConfigured detects when system DNS should be pointing to the proxy
+// but isn't (e.g., after external DNS reset, app restart, or Windows reconfiguration)
+// and automatically reconfigures it.
+func (app *App) ensureSystemDNSConfigured() {
+	// Only auto-repair if autoConfigureDNS is enabled
+	if !app.config.Settings.AutoConfigureDNS {
+		return
+	}
+
+	// Already configured — nothing to repair
+	if app.networkConfig.IsTransparentDNSConfigured() {
+		return
+	}
+
+	// Need either the service or elevation capability to reconfigure
+	if !app.networkConfig.IsServiceConnected() {
+		return
+	}
+
+	log.Printf("[network-monitor] DNS proxy should be active but system DNS is not configured — auto-repairing...")
+
+	app.configureSystemDNS()
+
+	if app.networkConfig.IsTransparentDNSConfigured() {
+		log.Printf("[network-monitor] DNS auto-repair successful")
+		app.mu.Lock()
+		app.dnsHealthIssue = ""
+		app.consecutiveDNSFailures = 0
+		app.mu.Unlock()
+	} else {
+		log.Printf("[network-monitor] DNS auto-repair failed — system DNS still not configured")
+		app.mu.Lock()
+		app.dnsHealthIssue = "DNS auto-configuration failed: system DNS not pointing to proxy"
+		app.mu.Unlock()
+	}
+}
+
 // checkDNSHealth verifies that the DNS proxy is reachable and responding correctly.
+// If the proxy stops responding, it attempts to restart it automatically.
 func (app *App) checkDNSHealth() {
 	// Only check if DNS is configured by us
 	if !app.networkConfig.IsTransparentDNSConfigured() {
@@ -168,7 +209,6 @@ func (app *App) checkDNSHealth() {
 	dns_response, _, query_err := dns_client.Exchange(dns_query, dns_target_address)
 
 	app.mu.Lock()
-	defer app.mu.Unlock()
 
 	if query_err != nil {
 		app.consecutiveDNSFailures++
@@ -176,6 +216,13 @@ func (app *App) checkDNSHealth() {
 			app.dnsHealthIssue = fmt.Sprintf("DNS proxy not responding on %s: %v", dns_proxy_address, query_err)
 			log.Printf("[network-monitor] DNS health issue: %s", app.dnsHealthIssue)
 		}
+		// Attempt auto-repair after sustained failures
+		if app.consecutiveDNSFailures == consecutiveFailuresBeforeAlert {
+			app.mu.Unlock()
+			app.attemptDNSProxyRestart()
+			return
+		}
+		app.mu.Unlock()
 		return
 	}
 
@@ -189,6 +236,7 @@ func (app *App) checkDNSHealth() {
 			app.dnsHealthIssue = fmt.Sprintf("DNS proxy returned error on %s: %s", dns_proxy_address, rcode_description)
 			log.Printf("[network-monitor] DNS health issue: %s", app.dnsHealthIssue)
 		}
+		app.mu.Unlock()
 		return
 	}
 
@@ -198,4 +246,18 @@ func (app *App) checkDNSHealth() {
 	}
 	app.consecutiveDNSFailures = 0
 	app.dnsHealthIssue = ""
+	app.mu.Unlock()
+}
+
+// attemptDNSProxyRestart tries to restart the DNS proxy on port 53 when it stops responding.
+func (app *App) attemptDNSProxyRestart() {
+	log.Printf("[network-monitor] Attempting DNS proxy restart on port 53...")
+
+	if restart_err := app.tunnelManager.RestartDNSProxyOnPort(53); restart_err != nil {
+		log.Printf("[network-monitor] DNS proxy restart failed: %v", restart_err)
+		return
+	}
+
+	system.FlushDNSCache()
+	log.Printf("[network-monitor] DNS proxy restarted successfully")
 }
