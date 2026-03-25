@@ -3,10 +3,6 @@
     "vmt-debug-service": {
       "command": "python",
       "args": ["utils/mcp/debug_service.py"]
-    },
-    "vmt-build": {
-      "command": "python",
-      "args": ["utils/mcp/build_server.py"]
     }
   }
 }

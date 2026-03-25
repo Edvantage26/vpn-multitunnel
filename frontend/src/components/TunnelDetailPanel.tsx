@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Profile, ProfileStatus, ActiveConnection } from '../App'
 import ServicePortSelector from './ServicePortSelector'
+import ConnectionTester from './ConnectionTester'
 
 // WireGuard config display type matching Go backend
 export interface WireGuardConfigDisplay {
@@ -640,6 +641,15 @@ function TunnelDetailPanel({
           size="sm"
         />
       </div>
+
+      {/* Connection Tester */}
+      <ConnectionTester
+        profileId={profile.id}
+        profileName={profile.name}
+        isConnected={isConnected}
+        domainSuffixes={profile.dns.domains || []}
+        tcpProxyPorts={profile.tcpProxyPorts || []}
+      />
 
       {/* Interface Section */}
       <div className="card p-4">

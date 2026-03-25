@@ -109,6 +109,23 @@ export interface UpdateInfo {
   installerURL: string
 }
 
+export interface HostTestResult {
+  hostname: string
+  profileId: string
+  profileName: string
+  dnsResolved: boolean
+  realIP: string
+  loopbackIP: string
+  dnsServer: string
+  dnsRule: string
+  dnsError?: string
+  usedSystemDNS: boolean
+  tcpConnected: boolean
+  tcpPort: number
+  tcpLatencyMs: number
+  tcpError?: string
+}
+
 declare global {
   interface Window {
     go: {
@@ -124,6 +141,7 @@ declare global {
           CreateConfigFromText: (configName: string, configContent: string) => Promise<Profile>
           UpdateProfile: (profile: Profile) => Promise<void>
           TestConnection: (profileId: string, host: string, port: number) => Promise<[boolean, string]>
+          TestHost: (hostname: string, port: number, profileId: string, useSystemDNS: boolean) => Promise<HostTestResult>
           GetSettings: () => Promise<Settings>
           UpdateSettings: (settings: Settings) => Promise<UpdateSettingsResult>
           GetTCPProxyConfig: () => Promise<TCPProxyConfig>

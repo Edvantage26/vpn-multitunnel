@@ -51,9 +51,18 @@ func (profile *Profile) ShouldAutoConnect() bool {
 	return *profile.AutoConnect
 }
 
-// GetTCPProxyPorts returns this profile's TCP proxy ports.
+// GetTCPProxyPorts returns this profile's TCP proxy ports (absolute values).
+// Negative values in config indicate "custom" ports (UI-only distinction); the backend always uses absolute values.
 func (profile *Profile) GetTCPProxyPorts() []int {
-	return profile.TCPProxyPorts
+	absolute_ports := make([]int, len(profile.TCPProxyPorts))
+	for port_index, port_value := range profile.TCPProxyPorts {
+		if port_value < 0 {
+			absolute_ports[port_index] = -port_value
+		} else {
+			absolute_ports[port_index] = port_value
+		}
+	}
+	return absolute_ports
 }
 
 // HealthCheck configuration for a profile

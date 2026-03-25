@@ -26,6 +26,8 @@ declare global {
           RestoreDNS: () => Promise<void>
           GetWireGuardConfig: (id: string) => Promise<WireGuardConfig>
           GetActiveConnections: () => Promise<ActiveConnection[]>
+          TestConnection: (profileId: string, host: string, port: number) => Promise<[boolean, string]>
+          TestHost: (hostname: string, port: number, profileId: string, useSystemDNS: boolean) => Promise<HostTestResult>
           TestHostConnectivity: (hostname: string, port: number) => Promise<HostTestResult>
           GetDNSProxyConfig: () => Promise<DNSProxyConfig>
           UpdateDNSProxyConfig: (config: DNSProxyConfig) => Promise<void>

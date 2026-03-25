@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
-import { formatPortLabel, searchServices, getServiceByPort } from '../data/servicePortRegistry'
+import { searchServices, getServiceByPort } from '../data/servicePortRegistry'
 
 interface ServicePortSelectorProps {
   selectedPorts: number[]
   onPortsChange: (ports: number[]) => void
   size?: 'sm' | 'md'
 }
+
+// Negative port = custom (user explicitly chose "Custom" even if a known service exists)
+// Positive port = known service lookup, or custom if not in registry
 
 function ServicePortSelector({ selectedPorts, onPortsChange, size = 'md' }: ServicePortSelectorProps) {
   const [searchInput, setSearchInput] = useState('')
@@ -14,16 +17,18 @@ function ServicePortSelector({ selectedPorts, onPortsChange, size = 'md' }: Serv
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const filteredServices = searchServices(searchInput, selectedPorts)
+  // For filtering, use absolute values of selected ports
+  const absoluteSelectedPorts = selectedPorts.map(portValue => Math.abs(portValue))
+  const filteredServices = searchServices(searchInput, absoluteSelectedPorts)
 
-  // Check if the search input is a valid custom port number not in the filtered results
+  // Check if the search input is a valid custom port number
   const parsedPortNumber = parseInt(searchInput.trim(), 10)
   const isValidCustomPort = !isNaN(parsedPortNumber)
     && parsedPortNumber >= 1
     && parsedPortNumber <= 65535
-    && !selectedPorts.includes(parsedPortNumber)
-  const customPortAlreadyInResults = filteredServices.some(entry => entry.port === parsedPortNumber)
-  const showCustomPortOption = isValidCustomPort && !customPortAlreadyInResults
+    && !absoluteSelectedPorts.includes(parsedPortNumber)
+  // Always show "Add custom port" when a valid number is typed, even if a known service matches
+  const showCustomPortOption = isValidCustomPort
 
   const totalOptions = filteredServices.length + (showCustomPortOption ? 1 : 0)
 
@@ -44,13 +49,19 @@ function ServicePortSelector({ selectedPorts, onPortsChange, size = 'md' }: Serv
   }, [searchInput])
 
   const addPort = (portNumber: number) => {
-    if (!selectedPorts.includes(portNumber)) {
-      const updatedPorts = [...selectedPorts, portNumber].sort((portA, portB) => portA - portB)
+    const absolutePort = Math.abs(portNumber)
+    if (!absoluteSelectedPorts.includes(absolutePort)) {
+      const updatedPorts = [...selectedPorts, portNumber].sort((portA, portB) => Math.abs(portA) - Math.abs(portB))
       onPortsChange(updatedPorts)
     }
     setSearchInput('')
     setIsDropdownOpen(false)
     inputRef.current?.focus()
+  }
+
+  const addCustomPort = (portNumber: number) => {
+    // Store as negative to mark as custom
+    addPort(-portNumber)
   }
 
   const removePort = (portToRemove: number) => {
@@ -65,10 +76,10 @@ function ServicePortSelector({ selectedPorts, onPortsChange, size = 'md' }: Serv
         if (highlightedIndex < filteredServices.length) {
           addPort(filteredServices[highlightedIndex].port)
         } else if (showCustomPortOption) {
-          addPort(parsedPortNumber)
+          addCustomPort(parsedPortNumber)
         }
       } else if (isValidCustomPort) {
-        addPort(parsedPortNumber)
+        addCustomPort(parsedPortNumber)
       }
     } else if (event.key === 'ArrowDown') {
       event.preventDefault()
@@ -95,7 +106,9 @@ function ServicePortSelector({ selectedPorts, onPortsChange, size = 'md' }: Serv
           <span className="text-dark-500 text-sm italic">No ports configured</span>
         ) : (
           selectedPorts.map(portValue => {
-            const serviceEntry = getServiceByPort(portValue)
+            const absolutePort = Math.abs(portValue)
+            const isCustom = portValue < 0
+            const serviceEntry = !isCustom ? getServiceByPort(absolutePort) : null
             return (
               <span
                 key={portValue}
@@ -104,10 +117,13 @@ function ServicePortSelector({ selectedPorts, onPortsChange, size = 'md' }: Serv
                 {serviceEntry ? (
                   <>
                     <span className="text-dark-100">{serviceEntry.service}</span>
-                    <span className="text-dark-400">({portValue})</span>
+                    <span className="text-dark-400">({absolutePort})</span>
                   </>
                 ) : (
-                  portValue
+                  <>
+                    <span className="text-dark-100">Custom</span>
+                    <span className="text-dark-400">({absolutePort})</span>
+                  </>
                 )}
                 <button
                   onClick={() => removePort(portValue)}
@@ -161,7 +177,7 @@ function ServicePortSelector({ selectedPorts, onPortsChange, size = 'md' }: Serv
             ))}
             {showCustomPortOption && (
               <button
-                onClick={() => addPort(parsedPortNumber)}
+                onClick={() => addCustomPort(parsedPortNumber)}
                 onMouseEnter={() => setHighlightedIndex(filteredServices.length)}
                 className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 border-t border-dark-700 transition-colors ${
                   highlightedIndex === filteredServices.length
