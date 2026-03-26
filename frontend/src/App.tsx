@@ -109,6 +109,35 @@ export interface UpdateInfo {
   installerURL: string
 }
 
+export interface DNSDiagnosticStep {
+  name: string
+  status: 'ok' | 'fail' | 'warn' | 'skip'
+  detail: string
+  fix?: string
+}
+
+export interface DNSDiagnosticDetail {
+  steps: DNSDiagnosticStep[]
+  activeInterface: string
+  currentSystemDNS: string[]
+  expectedDnsAddress: string
+  dnsProxyEnabled: boolean
+  dnsProxyListenPort: number
+  dnsClientRunning: boolean
+  serviceConnected: boolean
+  systemDnsConfigured: boolean
+  hasMatchingRule: boolean
+  matchedRuleSuffix?: string
+  matchedRuleProfile?: string
+  matchedRuleDns?: string
+  tunnelConnected: boolean
+  directTunnelDnsResult?: string
+  directTunnelDnsOk: boolean
+  proxyDirectResult?: string
+  proxyDirectOk: boolean
+  rootCause: string
+}
+
 export interface HostTestResult {
   hostname: string
   profileId: string
@@ -120,6 +149,7 @@ export interface HostTestResult {
   dnsRule: string
   dnsError?: string
   usedSystemDNS: boolean
+  dnsDiagnostics?: DNSDiagnosticDetail
   tcpConnected: boolean
   tcpPort: number
   tcpLatencyMs: number

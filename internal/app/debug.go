@@ -11,6 +11,7 @@ import (
 
 	"vpnmultitunnel/internal/config"
 	"vpnmultitunnel/internal/debug"
+	"vpnmultitunnel/internal/system"
 )
 
 // TestConnection tests connectivity through a tunnel
@@ -484,32 +485,75 @@ func (app *App) TestHost(hostname string, port int, profileID string, useSystemD
 		UsedSystemDNS: useSystemDNS,
 	}
 
-	// If using system DNS, resolve through the OS (which should use our DNS proxy)
+	// If using system DNS, resolve through the OS (same path as a browser)
+	// This goes through: system DNS → our DNS proxy → tunnel DNS
+	// Then TCP connects through: system stack → loopback IP → TCP proxy → tunnel
 	if useSystemDNS {
-		ips, err := net.LookupHost(hostname)
-		if err != nil {
-			result.DNSError = fmt.Sprintf("System DNS resolution failed: %v", err)
-			return result
-		}
-		if len(ips) > 0 {
-			result.RealIP = ips[0]
-			result.DNSResolved = true
-			result.DNSServer = "system"
-
-			// Try TCP connection through system (normal network stack)
-			addr := net.JoinHostPort(result.RealIP, fmt.Sprintf("%d", port))
-			start := time.Now()
-			conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
-			elapsed := time.Since(start)
-
-			if err != nil {
-				result.TCPError = err.Error()
-			} else {
-				conn.Close()
-				result.TCPConnected = true
-				result.TCPLatencyMs = elapsed.Milliseconds()
+		// Find the matching DNS rule for display purposes
+		matchingRule := app.GetMatchingRule(hostname)
+		if matchingRule != nil {
+			result.DNSRule = matchingRule.Suffix
+			result.DNSServer = matchingRule.DNSServer
+			result.ProfileID = matchingRule.ProfileID
+			profile, profileErr := app.profileService.GetByID(matchingRule.ProfileID)
+			if profileErr == nil {
+				result.ProfileName = profile.Name
 			}
 		}
+
+		resolvedIPs, lookupErr := net.LookupHost(hostname)
+		if lookupErr != nil {
+			result.DNSError = fmt.Sprintf("System DNS resolution failed: %v", lookupErr)
+			result.DNSDiagnostics = app.gatherDNSDiagnostics(hostname, matchingRule)
+			return result
+		}
+		if len(resolvedIPs) == 0 {
+			result.DNSError = "System DNS returned no addresses"
+			result.DNSDiagnostics = app.gatherDNSDiagnostics(hostname, matchingRule)
+			return result
+		}
+
+		resolvedAddress := resolvedIPs[0]
+		result.DNSResolved = true
+
+		// Check if the resolved IP is a loopback (meaning our DNS proxy returned it
+		// for transparent proxying). If so, look up the real IP from host mappings.
+		if strings.HasPrefix(resolvedAddress, "127.0.") && resolvedAddress != "127.0.0.1" {
+			result.LoopbackIP = resolvedAddress
+			// Find the real IP from host mappings
+			hostMappings := app.tunnelManager.GetHostMappings()
+			for _, mapping := range hostMappings {
+				if mapping.Hostname == hostname {
+					result.RealIP = mapping.RealIP
+					break
+				}
+			}
+			if result.RealIP == "" {
+				result.RealIP = resolvedAddress
+			}
+		} else {
+			result.RealIP = resolvedAddress
+		}
+
+		// TCP connection through system stack (goes through transparent proxy if loopback)
+		tcpTargetAddress := net.JoinHostPort(resolvedAddress, fmt.Sprintf("%d", port))
+		tcpStartTime := time.Now()
+		tcpConnection, tcpErr := net.DialTimeout("tcp", tcpTargetAddress, 10*time.Second)
+		tcpElapsed := time.Since(tcpStartTime)
+
+		if tcpErr != nil {
+			result.TCPError = tcpErr.Error()
+		} else {
+			tcpConnection.Close()
+			result.TCPConnected = true
+			result.TCPLatencyMs = tcpElapsed.Milliseconds()
+		}
+
+		// Record latency metric
+		if result.ProfileID != "" {
+			debug.RecordLatencySample(result.ProfileID, tcpTargetAddress, tcpElapsed, result.TCPConnected)
+		}
+
 		return result
 	}
 
@@ -636,6 +680,269 @@ func (app *App) TestHost(hostname string, port int, profileID string, useSystemD
 	}
 
 	return result
+}
+
+// gatherDNSDiagnostics runs an exhaustive diagnostic of the DNS chain when system DNS resolution fails.
+// It checks every link: system DNS config → DNS proxy → tunnel → remote DNS server.
+func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRuleInfo) *debug.DNSDiagnosticDetail {
+	diagnostics := &debug.DNSDiagnosticDetail{
+		Steps: []debug.DNSDiagnosticStep{},
+	}
+
+	// --- Step 1: DNS Proxy enabled? ---
+	dnsProxyEnabled := app.config.DNSProxy.Enabled
+	diagnostics.DNSProxyEnabled = dnsProxyEnabled
+	diagnostics.DNSProxyListenPort = app.config.DNSProxy.ListenPort
+	if dnsProxyEnabled {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Proxy Enabled",
+			Status: "ok",
+			Detail: fmt.Sprintf("DNS proxy is enabled (port %d)", app.config.DNSProxy.ListenPort),
+		})
+	} else {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Proxy Enabled",
+			Status: "fail",
+			Detail: "DNS proxy is disabled. No DNS routing is active.",
+			Fix:    "Enable the DNS proxy in Settings or connect a VPN profile with DNS rules configured.",
+		})
+		diagnostics.RootCause = "DNS proxy is disabled — no domain-based routing is active"
+		return diagnostics
+	}
+
+	// --- Step 2: DNS rule matching ---
+	diagnostics.HasMatchingRule = matchingRule != nil
+	if matchingRule != nil {
+		diagnostics.MatchedRuleSuffix = matchingRule.Suffix
+		diagnostics.MatchedRuleProfile = matchingRule.ProfileName
+		diagnostics.MatchedRuleDNS = matchingRule.DNSServer
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Rule Match",
+			Status: "ok",
+			Detail: fmt.Sprintf("Hostname matches rule '%s' → profile '%s' (DNS: %s)", matchingRule.Suffix, matchingRule.ProfileName, matchingRule.DNSServer),
+		})
+	} else {
+		// List configured suffixes for the error
+		var configuredSuffixes []string
+		for _, rule := range app.config.DNSProxy.Rules {
+			configuredSuffixes = append(configuredSuffixes, rule.Suffix)
+		}
+		suffixList := "none configured"
+		if len(configuredSuffixes) > 0 {
+			suffixList = strings.Join(configuredSuffixes, ", ")
+		}
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Rule Match",
+			Status: "fail",
+			Detail: fmt.Sprintf("No DNS rule matches '%s'. Configured suffixes: %s", hostname, suffixList),
+			Fix:    fmt.Sprintf("Add a DNS rule with a suffix that matches '%s', or check the hostname is correct.", hostname),
+		})
+		diagnostics.RootCause = fmt.Sprintf("No DNS rule matches hostname '%s' — the DNS proxy doesn't know how to route this domain", hostname)
+		return diagnostics
+	}
+
+	// --- Step 3: Tunnel connected? ---
+	tunnelConnected := app.tunnelManager.IsConnected(matchingRule.ProfileID)
+	diagnostics.TunnelConnected = tunnelConnected
+	if tunnelConnected {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "Tunnel Connected",
+			Status: "ok",
+			Detail: fmt.Sprintf("Tunnel '%s' is connected", matchingRule.ProfileName),
+		})
+	} else {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "Tunnel Connected",
+			Status: "fail",
+			Detail: fmt.Sprintf("Tunnel '%s' is NOT connected", matchingRule.ProfileName),
+			Fix:    fmt.Sprintf("Connect the VPN profile '%s' first.", matchingRule.ProfileName),
+		})
+		diagnostics.RootCause = fmt.Sprintf("Tunnel '%s' is disconnected — DNS queries cannot reach the remote DNS server", matchingRule.ProfileName)
+		return diagnostics
+	}
+
+	// --- Step 4: Service connected? ---
+	serviceConnected := false
+	if app.networkConfig != nil {
+		serviceConnected = app.networkConfig.IsServiceConnected()
+	}
+	diagnostics.ServiceConnected = serviceConnected
+	if serviceConnected {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "Service Connected",
+			Status: "ok",
+			Detail: "VPN MultiTunnel Service is connected (privileged operations available)",
+		})
+	} else {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "Service Connected",
+			Status: "warn",
+			Detail: "VPN MultiTunnel Service is NOT connected. DNS configuration may require UAC elevation.",
+			Fix:    "Install and start the service: VPNMultiTunnel-service.exe install && VPNMultiTunnel-service.exe start",
+		})
+	}
+
+	// --- Step 5: DNS Client (Dnscache) status ---
+	dnsClientRunning := system.IsDNSClientRunning()
+	diagnostics.DNSClientRunning = dnsClientRunning
+	if !dnsClientRunning {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Client Service (Dnscache)",
+			Status: "ok",
+			Detail: "Dnscache is stopped (not interfering with port 53)",
+		})
+	} else {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Client Service (Dnscache)",
+			Status: "warn",
+			Detail: "Dnscache is RUNNING. It may be caching stale DNS responses or intercepting queries before they reach our proxy.",
+			Fix:    "The app should stop Dnscache automatically. If this persists, try disconnecting and reconnecting the VPN profile.",
+		})
+	}
+
+	// --- Step 6: System DNS configuration ---
+	expectedDNSAddress := "127.0.0.53"
+	if app.networkConfig != nil {
+		expectedDNSAddress = app.networkConfig.GetDNSProxyAddress()
+	}
+	diagnostics.ExpectedDNSAddress = expectedDNSAddress
+
+	activeInterface := ""
+	var currentDNSServers []string
+	if app.networkConfig != nil {
+		interfaceName, interfaceErr := app.networkConfig.GetActiveNetworkInterface()
+		if interfaceErr == nil {
+			activeInterface = interfaceName
+			dnsServers, dnsErr := app.networkConfig.GetCurrentDNS(interfaceName)
+			if dnsErr == nil {
+				currentDNSServers = dnsServers
+			}
+		}
+	}
+	diagnostics.ActiveInterface = activeInterface
+	diagnostics.CurrentSystemDNS = currentDNSServers
+
+	systemDNSPointsToProxy := false
+	if len(currentDNSServers) > 0 && currentDNSServers[0] == expectedDNSAddress {
+		systemDNSPointsToProxy = true
+	}
+	diagnostics.SystemDNSConfigured = systemDNSPointsToProxy
+
+	if systemDNSPointsToProxy {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "System DNS → Proxy",
+			Status: "ok",
+			Detail: fmt.Sprintf("Interface '%s' DNS is set to %s (our proxy)", activeInterface, currentDNSServers[0]),
+		})
+	} else {
+		currentDNSDisplay := "unknown"
+		if len(currentDNSServers) > 0 {
+			currentDNSDisplay = strings.Join(currentDNSServers, ", ")
+		}
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "System DNS → Proxy",
+			Status: "fail",
+			Detail: fmt.Sprintf("Interface '%s' DNS is [%s] but should be [%s]. System DNS is NOT pointing to our proxy!", activeInterface, currentDNSDisplay, expectedDNSAddress),
+			Fix:    "Click 'Configure DNS' in the app or disconnect/reconnect the VPN. The system DNS should be automatically set to " + expectedDNSAddress + " when a tunnel connects.",
+		})
+		diagnostics.RootCause = fmt.Sprintf("System DNS is [%s] instead of [%s] — DNS queries are going to an external server, not our proxy", currentDNSDisplay, expectedDNSAddress)
+		// Don't return yet — continue gathering info for completeness
+	}
+
+	// --- Step 7: DNS proxy direct test (send query directly to proxy, bypassing system DNS) ---
+	proxyTestAddress := fmt.Sprintf("%s:53", expectedDNSAddress)
+	dnsClient := &dns.Client{
+		Net:     "udp",
+		Timeout: 3 * time.Second,
+	}
+	dnsQuery := new(dns.Msg)
+	dnsQuery.SetQuestion(dns.Fqdn(hostname), dns.TypeA)
+	dnsResponse, _, proxyQueryErr := dnsClient.Exchange(dnsQuery, proxyTestAddress)
+
+	if proxyQueryErr != nil {
+		diagnostics.ProxyDirectOk = false
+		diagnostics.ProxyDirectResult = proxyQueryErr.Error()
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Proxy Direct Query",
+			Status: "fail",
+			Detail: fmt.Sprintf("Direct query to proxy (%s) failed: %s", proxyTestAddress, proxyQueryErr.Error()),
+			Fix:    "The DNS proxy may not be listening. Check if port 53 is free and the proxy started correctly. Try disconnecting and reconnecting.",
+		})
+		if diagnostics.RootCause == "" {
+			diagnostics.RootCause = fmt.Sprintf("DNS proxy at %s is not responding — it may not be running or port 53 is blocked", proxyTestAddress)
+		}
+	} else if dnsResponse != nil && dnsResponse.Rcode != dns.RcodeSuccess {
+		diagnostics.ProxyDirectOk = false
+		rcodeName := dns.RcodeToString[dnsResponse.Rcode]
+		diagnostics.ProxyDirectResult = fmt.Sprintf("Response code: %s (%d)", rcodeName, dnsResponse.Rcode)
+		fixMessage := "Check the hostname is correct and exists in the remote DNS server."
+		if dnsResponse.Rcode == dns.RcodeNameError {
+			fixMessage = fmt.Sprintf("The remote DNS server (%s) does not know this hostname. Verify the hostname is correct and that it exists in the remote network.", matchingRule.DNSServer)
+		}
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Proxy Direct Query",
+			Status: "fail",
+			Detail: fmt.Sprintf("Proxy responded with %s for '%s'", rcodeName, hostname),
+			Fix:    fixMessage,
+		})
+		if diagnostics.RootCause == "" {
+			diagnostics.RootCause = fmt.Sprintf("DNS proxy is running but remote DNS (%s) returned %s — hostname '%s' may not exist in the remote network", matchingRule.DNSServer, rcodeName, hostname)
+		}
+	} else if dnsResponse != nil {
+		// Extract resolved IP
+		var resolvedIP string
+		for _, answerRecord := range dnsResponse.Answer {
+			if aRecord, isARecord := answerRecord.(*dns.A); isARecord {
+				resolvedIP = aRecord.A.String()
+				break
+			}
+		}
+		diagnostics.ProxyDirectOk = true
+		diagnostics.ProxyDirectResult = resolvedIP
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "DNS Proxy Direct Query",
+			Status: "ok",
+			Detail: fmt.Sprintf("Direct query to proxy resolved '%s' → %s", hostname, resolvedIP),
+		})
+
+		// If proxy works but system DNS failed, the problem is definitely in the system DNS chain
+		if diagnostics.RootCause == "" {
+			diagnostics.RootCause = "DNS proxy resolves correctly but system DNS is not reaching it — check system DNS settings and Dnscache"
+		}
+	}
+
+	// --- Step 8: Direct tunnel DNS test (bypass everything, query remote DNS through tunnel) ---
+	if tunnelConnected && matchingRule.DNSServer != "" {
+		directIP, directErr := app.tunnelManager.ResolveViaTunnel(matchingRule.ProfileID, hostname, matchingRule.DNSServer)
+		if directErr != nil {
+			diagnostics.DirectTunnelDNSOk = false
+			diagnostics.DirectTunnelDNSResult = directErr.Error()
+			diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+				Name:   "Direct Tunnel DNS Query",
+				Status: "fail",
+				Detail: fmt.Sprintf("Direct query through tunnel to %s failed: %s", matchingRule.DNSServer, directErr.Error()),
+				Fix:    fmt.Sprintf("The remote DNS server %s is unreachable through the tunnel. Check the tunnel health and the DNS server configuration.", matchingRule.DNSServer),
+			})
+			if diagnostics.RootCause == "" {
+				diagnostics.RootCause = fmt.Sprintf("Remote DNS server %s is unreachable through tunnel '%s' — the tunnel may be unhealthy or the DNS server is down", matchingRule.DNSServer, matchingRule.ProfileName)
+			}
+		} else {
+			diagnostics.DirectTunnelDNSOk = true
+			diagnostics.DirectTunnelDNSResult = directIP
+			diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+				Name:   "Direct Tunnel DNS Query",
+				Status: "ok",
+				Detail: fmt.Sprintf("Direct tunnel query to %s resolved '%s' → %s", matchingRule.DNSServer, hostname, directIP),
+			})
+		}
+	}
+
+	// --- Final root cause if not set ---
+	if diagnostics.RootCause == "" {
+		diagnostics.RootCause = "DNS resolution failed through the system but the exact cause could not be determined. Check all diagnostic steps above."
+	}
+
+	return diagnostics
 }
 
 // GetSystemInfo returns system information

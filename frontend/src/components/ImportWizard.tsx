@@ -178,7 +178,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
         autoConnect: auto_connect_enabled,
         dns: {
           ...imported_profile.dns,
-          domains: [dns_suffix_input],
+          domains: [dns_suffix_input.startsWith('.') ? dns_suffix_input.slice(1) : dns_suffix_input],
           stripSuffix: strip_suffix_enabled,
         },
       }

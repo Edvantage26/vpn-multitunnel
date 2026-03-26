@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { HostTestResult } from '../App'
+import { HostTestResult, DNSDiagnosticStep } from '../App'
 import { getServiceByPort } from '../data/servicePortRegistry'
 
 interface ConnectionTesterProps {
@@ -43,7 +43,7 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
     setTestResult(null)
 
     try {
-      const result = await window.go.app.App.TestHost(fullHostname, selectedPort, profileId, false)
+      const result = await window.go.app.App.TestHost(fullHostname, selectedPort, profileId, true)
       setTestResult(result)
     } catch (error) {
       setTestResult({
@@ -56,7 +56,7 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
         dnsServer: '',
         dnsRule: '',
         dnsError: String(error),
-        usedSystemDNS: false,
+        usedSystemDNS: true,
         tcpConnected: false,
         tcpPort: selectedPort,
         tcpLatencyMs: 0,
@@ -322,28 +322,140 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
                   </div>
                 )}
 
-                {/* Failure diagnosis hint */}
-                {resultStatus === 'dns_fail' && !testResult.dnsResolved && (
-                  <div className="mt-2 pt-2 border-t border-dark-700/50 text-dark-400">
-                    <span className="font-medium text-dark-300">Possible causes:</span>
-                    <ul className="mt-1 space-y-0.5 list-disc list-inside text-dark-500">
-                      {!testResult.dnsRule && (
-                        <li>No DNS rule matches this hostname. Check domain suffixes.</li>
-                      )}
-                      {testResult.dnsError?.includes('not connected') && (
-                        <li>The tunnel for this profile is not connected.</li>
-                      )}
-                      {testResult.dnsError?.includes('DNS server') && (
-                        <li>The DNS server configured for this profile is unreachable through the tunnel.</li>
-                      )}
-                      {testResult.dnsError?.includes('NXDOMAIN') && (
-                        <li>The hostname does not exist in the remote DNS server.</li>
-                      )}
-                      <li>Verify the hostname is correct and the DNS server ({testResult.dnsServer || 'not configured'}) is accessible.</li>
-                    </ul>
+                {/* DNS Failure Diagnostics */}
+                {resultStatus === 'dns_fail' && testResult.dnsDiagnostics && (
+                  <div className="mt-2 pt-2 border-t border-dark-700/50">
+                    {/* Root cause banner */}
+                    <div className="bg-red-900/30 border border-red-700/40 rounded px-3 py-2 mb-3">
+                      <div className="text-xs font-semibold text-red-300 mb-0.5">Root Cause</div>
+                      <div className="text-xs text-red-200">{testResult.dnsDiagnostics.rootCause}</div>
+                    </div>
+
+                    {/* Diagnostic chain steps */}
+                    <div className="text-xs font-semibold text-dark-300 mb-2">Diagnostic Chain</div>
+                    <div className="space-y-1.5 mb-3">
+                      {testResult.dnsDiagnostics.steps.map((step: DNSDiagnosticStep, stepIndex: number) => (
+                        <div key={stepIndex} className={`rounded border px-2.5 py-1.5 ${
+                          step.status === 'ok' ? 'bg-green-900/10 border-green-800/30' :
+                          step.status === 'warn' ? 'bg-yellow-900/10 border-yellow-800/30' :
+                          'bg-red-900/10 border-red-800/30'
+                        }`}>
+                          <div className="flex items-center gap-1.5">
+                            {step.status === 'ok' ? (
+                              <svg className="w-3 h-3 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : step.status === 'warn' ? (
+                              <svg className="w-3 h-3 text-yellow-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 9v2m0 4h.01" />
+                              </svg>
+                            ) : (
+                              <svg className="w-3 h-3 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            )}
+                            <span className={`font-medium ${
+                              step.status === 'ok' ? 'text-green-400' :
+                              step.status === 'warn' ? 'text-yellow-400' : 'text-red-400'
+                            }`}>{step.name}</span>
+                          </div>
+                          <div className="text-dark-400 mt-0.5 ml-[18px]">{step.detail}</div>
+                          {step.fix && (
+                            <div className="mt-1 ml-[18px] text-primary-400 bg-primary-900/20 rounded px-2 py-1">
+                              <span className="font-medium">Fix:</span> {step.fix}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* System state snapshot */}
+                    <details className="group">
+                      <summary className="text-xs font-semibold text-dark-300 cursor-pointer hover:text-dark-200 select-none">
+                        System State Snapshot
+                        <span className="ml-1 text-dark-500 font-normal">click to expand</span>
+                      </summary>
+                      <div className="mt-2 bg-dark-800/50 rounded border border-dark-700/50 overflow-hidden">
+                        <table className="w-full text-xs">
+                          <tbody className="divide-y divide-dark-700/30">
+                            <tr><td className="px-2.5 py-1 text-dark-500 w-40">Active Interface</td><td className="px-2.5 py-1 font-mono text-dark-300">{testResult.dnsDiagnostics.activeInterface || 'unknown'}</td></tr>
+                            <tr><td className="px-2.5 py-1 text-dark-500">Current System DNS</td><td className="px-2.5 py-1 font-mono text-dark-300">{testResult.dnsDiagnostics.currentSystemDNS?.join(', ') || 'unknown'}</td></tr>
+                            <tr><td className="px-2.5 py-1 text-dark-500">Expected DNS Address</td><td className="px-2.5 py-1 font-mono text-dark-300">{testResult.dnsDiagnostics.expectedDnsAddress}</td></tr>
+                            <tr>
+                              <td className="px-2.5 py-1 text-dark-500">System DNS → Proxy</td>
+                              <td className="px-2.5 py-1">
+                                <span className={`font-mono ${testResult.dnsDiagnostics.systemDnsConfigured ? 'text-green-400' : 'text-red-400'}`}>
+                                  {testResult.dnsDiagnostics.systemDnsConfigured ? 'YES' : 'NO'}
+                                </span>
+                              </td>
+                            </tr>
+                            <tr><td className="px-2.5 py-1 text-dark-500">DNS Proxy</td><td className="px-2.5 py-1 font-mono text-dark-300">{testResult.dnsDiagnostics.dnsProxyEnabled ? `Enabled (port ${testResult.dnsDiagnostics.dnsProxyListenPort})` : 'Disabled'}</td></tr>
+                            <tr>
+                              <td className="px-2.5 py-1 text-dark-500">Dnscache Service</td>
+                              <td className="px-2.5 py-1">
+                                <span className={`font-mono ${testResult.dnsDiagnostics.dnsClientRunning ? 'text-yellow-400' : 'text-green-400'}`}>
+                                  {testResult.dnsDiagnostics.dnsClientRunning ? 'RUNNING (may interfere)' : 'STOPPED'}
+                                </span>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className="px-2.5 py-1 text-dark-500">Service Connected</td>
+                              <td className="px-2.5 py-1">
+                                <span className={`font-mono ${testResult.dnsDiagnostics.serviceConnected ? 'text-green-400' : 'text-yellow-400'}`}>
+                                  {testResult.dnsDiagnostics.serviceConnected ? 'YES' : 'NO'}
+                                </span>
+                              </td>
+                            </tr>
+                            {testResult.dnsDiagnostics.hasMatchingRule && (
+                              <>
+                                <tr><td className="px-2.5 py-1 text-dark-500">Matched Rule</td><td className="px-2.5 py-1 font-mono text-dark-300">{testResult.dnsDiagnostics.matchedRuleSuffix} → {testResult.dnsDiagnostics.matchedRuleProfile}</td></tr>
+                                <tr><td className="px-2.5 py-1 text-dark-500">Rule DNS Server</td><td className="px-2.5 py-1 font-mono text-dark-300">{testResult.dnsDiagnostics.matchedRuleDns}</td></tr>
+                                <tr>
+                                  <td className="px-2.5 py-1 text-dark-500">Tunnel Connected</td>
+                                  <td className="px-2.5 py-1">
+                                    <span className={`font-mono ${testResult.dnsDiagnostics.tunnelConnected ? 'text-green-400' : 'text-red-400'}`}>
+                                      {testResult.dnsDiagnostics.tunnelConnected ? 'YES' : 'NO'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              </>
+                            )}
+                            {testResult.dnsDiagnostics.proxyDirectResult && (
+                              <tr>
+                                <td className="px-2.5 py-1 text-dark-500">Proxy Direct Query</td>
+                                <td className="px-2.5 py-1">
+                                  <span className={`font-mono ${testResult.dnsDiagnostics.proxyDirectOk ? 'text-green-400' : 'text-red-400'}`}>
+                                    {testResult.dnsDiagnostics.proxyDirectResult}
+                                  </span>
+                                </td>
+                              </tr>
+                            )}
+                            {testResult.dnsDiagnostics.directTunnelDnsResult && (
+                              <tr>
+                                <td className="px-2.5 py-1 text-dark-500">Direct Tunnel DNS</td>
+                                <td className="px-2.5 py-1">
+                                  <span className={`font-mono ${testResult.dnsDiagnostics.directTunnelDnsOk ? 'text-green-400' : 'text-red-400'}`}>
+                                    {testResult.dnsDiagnostics.directTunnelDnsResult}
+                                  </span>
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
                   </div>
                 )}
 
+                {/* DNS fail without diagnostics (fallback) */}
+                {resultStatus === 'dns_fail' && !testResult.dnsDiagnostics && (
+                  <div className="mt-2 pt-2 border-t border-dark-700/50 text-dark-400">
+                    <span className="font-medium text-dark-300">DNS resolution failed:</span>
+                    <div className="text-red-400/80 mt-1">{testResult.dnsError}</div>
+                  </div>
+                )}
+
+                {/* TCP Failure */}
                 {resultStatus === 'tcp_fail' && (
                   <div className="mt-2 pt-2 border-t border-dark-700/50 text-dark-400">
                     <span className="font-medium text-dark-300">Possible causes:</span>

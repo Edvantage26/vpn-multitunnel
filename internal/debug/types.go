@@ -19,11 +19,56 @@ type HostTestResult struct {
 	DNSError      string `json:"dnsError,omitempty"`
 	UsedSystemDNS bool   `json:"usedSystemDNS"`      // True if resolved via system DNS (like apps do)
 
+	// Detailed diagnostics (populated on DNS failure)
+	DNSDiagnostics *DNSDiagnosticDetail `json:"dnsDiagnostics,omitempty"`
+
 	// TCP Connectivity
 	TCPConnected bool   `json:"tcpConnected"`
 	TCPPort      int    `json:"tcpPort"`
 	TCPLatencyMs int64  `json:"tcpLatencyMs"`
 	TCPError     string `json:"tcpError,omitempty"`
+}
+
+// DNSDiagnosticStep represents one step in the DNS resolution chain with pass/fail status
+type DNSDiagnosticStep struct {
+	Name    string `json:"name"`              // Step name (e.g., "DNS Proxy Listening")
+	Status  string `json:"status"`            // "ok", "fail", "warn", "skip"
+	Detail  string `json:"detail"`            // What was found
+	Fix     string `json:"fix,omitempty"`     // How to fix if failed
+}
+
+// DNSDiagnosticDetail contains exhaustive diagnostic info when DNS resolution fails
+type DNSDiagnosticDetail struct {
+	// Chain steps - ordered diagnostic checks
+	Steps []DNSDiagnosticStep `json:"steps"`
+
+	// System state snapshot
+	ActiveInterface     string   `json:"activeInterface"`
+	CurrentSystemDNS    []string `json:"currentSystemDNS"`
+	ExpectedDNSAddress  string   `json:"expectedDnsAddress"`
+	DNSProxyEnabled     bool     `json:"dnsProxyEnabled"`
+	DNSProxyListenPort  int      `json:"dnsProxyListenPort"`
+	DNSClientRunning    bool     `json:"dnsClientRunning"`
+	ServiceConnected    bool     `json:"serviceConnected"`
+	SystemDNSConfigured bool     `json:"systemDnsConfigured"`
+
+	// Rule matching
+	HasMatchingRule     bool   `json:"hasMatchingRule"`
+	MatchedRuleSuffix   string `json:"matchedRuleSuffix,omitempty"`
+	MatchedRuleProfile  string `json:"matchedRuleProfile,omitempty"`
+	MatchedRuleDNS      string `json:"matchedRuleDns,omitempty"`
+	TunnelConnected     bool   `json:"tunnelConnected"`
+
+	// Direct tunnel test (bypassing system DNS)
+	DirectTunnelDNSResult string `json:"directTunnelDnsResult,omitempty"` // IP or error
+	DirectTunnelDNSOk     bool   `json:"directTunnelDnsOk"`
+
+	// DNS proxy direct test
+	ProxyDirectResult string `json:"proxyDirectResult,omitempty"` // IP or error
+	ProxyDirectOk     bool   `json:"proxyDirectOk"`
+
+	// Summary
+	RootCause string `json:"rootCause"` // Most likely cause in plain language
 }
 
 // HostMappingInfo contains information about a host mapping
