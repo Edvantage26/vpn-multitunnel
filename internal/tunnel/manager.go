@@ -35,7 +35,7 @@ func NewManager(cfg *config.AppConfig) *Manager {
 	}
 
 	// Start TCP proxy if enabled
-	if cfg.TCPProxy.Enabled {
+	if cfg.TCPProxy.IsEnabled() {
 		profilePortsMap := buildProfilePortsMap(cfg.Profiles)
 		tunnel_manager.proxyManager.StartTCPProxy(&cfg.TCPProxy, tunnel_manager.getTunnelForProfile, profilePortsMap)
 	}
@@ -195,7 +195,7 @@ func (tunnel_manager *Manager) GetDNSProxyPort() int {
 // RestartTCPProxy restarts the TCP proxy with new configuration
 func (tunnel_manager *Manager) RestartTCPProxy(tcpConfig *config.TCPProxy) {
 	tunnel_manager.proxyManager.StopTCPProxy()
-	if tcpConfig.Enabled {
+	if tcpConfig.IsEnabled() {
 		profilePortsMap := buildProfilePortsMap(tunnel_manager.config.Profiles)
 		tunnel_manager.proxyManager.StartTCPProxy(tcpConfig, tunnel_manager.getTunnelForProfile, profilePortsMap)
 	}

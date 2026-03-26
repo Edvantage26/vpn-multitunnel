@@ -180,7 +180,7 @@ func (app *App) Startup(ctx context.Context) {
 			continue
 		}
 		// Check if loopback IP exists - skip if not and service unavailable
-		if cfg.TCPProxy.Enabled && cfg.Settings.AutoConfigureLoopback {
+		if cfg.TCPProxy.IsEnabled() && cfg.Settings.AutoConfigureLoopback {
 			tunnelIP := app.profileService.GetTunnelIP(profile.ID)
 			if tunnelIP != "" && !app.networkConfig.LoopbackIPExists(tunnelIP) && !app.networkConfig.IsServiceConnected() {
 				log.Printf("Auto-connect skipped for %s: loopback IP %s not configured and service not available", profile.Name, tunnelIP)

@@ -73,7 +73,7 @@ func (app *App) connectInternal(id string, allowElevation bool) error {
 	}
 
 	// Ensure loopback IP exists for this profile
-	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.Enabled {
+	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.IsEnabled() {
 		if tunnelIP := app.profileService.GetTunnelIP(id); tunnelIP != "" {
 			if !app.networkConfig.LoopbackIPExists(tunnelIP) {
 				if allowElevation || app.networkConfig.IsServiceConnected() {
@@ -244,7 +244,7 @@ func (app *App) ImportConfig() (*config.Profile, error) {
 	}
 
 	// Add loopback IP for the new profile if running as admin
-	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.Enabled {
+	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.IsEnabled() {
 		if tunnelIP := app.profileService.GetTunnelIP(profile.ID); tunnelIP != "" {
 			if system.IsAdmin() {
 				if err := app.networkConfig.EnsureLoopbackIPs([]string{tunnelIP}); err != nil {
@@ -274,7 +274,7 @@ func (app *App) CreateConfigFromText(config_name string, config_content string) 
 	}
 
 	// Add loopback IP for the new profile if running as admin
-	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.Enabled {
+	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.IsEnabled() {
 		if tunnelIP := app.profileService.GetTunnelIP(profile.ID); tunnelIP != "" {
 			if system.IsAdmin() {
 				if loopback_error := app.networkConfig.EnsureLoopbackIPs([]string{tunnelIP}); loopback_error != nil {
@@ -299,7 +299,7 @@ func (app *App) UpdateProfile(profile config.Profile) error {
 	app.syncProfileDNSToRules(profile)
 
 	// Restart TCP proxy to pick up per-profile port changes
-	if app.config.TCPProxy.Enabled {
+	if app.config.TCPProxy.IsEnabled() {
 		app.tunnelManager.RestartTCPProxy(&app.config.TCPProxy)
 	}
 

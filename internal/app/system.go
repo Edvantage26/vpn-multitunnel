@@ -55,7 +55,7 @@ func (app *App) GetSystemStatus() map[string]interface{} {
 		"autoConfigureDNS":      app.config.Settings.AutoConfigureDNS,
 		"usePort53":             app.config.Settings.UsePort53,
 		"useService":            app.config.Settings.UseService,
-		"tcpProxyEnabled":       app.config.TCPProxy.Enabled,
+		"tcpProxyEnabled":       app.config.TCPProxy.IsEnabled(),
 		"dnsProxyEnabled":       app.config.DNSProxy.Enabled,
 		"dnsProxyPort":          app.config.DNSProxy.ListenPort,
 		"activeInterface":       activeInterface,

@@ -120,6 +120,12 @@ type TCPProxy struct {
 	TunnelIPs map[string]string `json:"tunnelIPs"` // profileID -> "127.0.x.1"
 }
 
+// IsEnabled returns true if the TCP proxy should be active.
+// The TCP proxy is active when there are tunnel IPs assigned, regardless of the Enabled flag.
+func (tcp_proxy *TCPProxy) IsEnabled() bool {
+	return len(tcp_proxy.TunnelIPs) > 0
+}
+
 // Default returns a default configuration
 func Default() *AppConfig {
 	return &AppConfig{

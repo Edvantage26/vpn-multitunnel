@@ -470,7 +470,7 @@ func (app *App) GetMatchingRule(hostname string) *debug.DNSRuleInfo {
 // GetTCPProxyInfo returns TCP proxy configuration and status
 func (app *App) GetTCPProxyInfo() debug.TCPProxyInfo {
 	return debug.TCPProxyInfo{
-		Enabled:       app.config.TCPProxy.Enabled,
+		Enabled:       app.config.TCPProxy.IsEnabled(),
 		ListenerCount: app.tunnelManager.GetTCPProxyListenerCount(),
 		TunnelIPs:     app.config.TCPProxy.TunnelIPs,
 	}
