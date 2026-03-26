@@ -155,7 +155,7 @@ func (proxy_manager *Manager) StartTCPProxy(tcpConfig *config.TCPProxy, tunnelGe
 
 	// Configure DNS proxy for transparent proxy mode with the callback
 	if proxy_manager.dnsProxy != nil {
-		proxy_manager.dnsProxy.SetTransparentProxyConfig(tcpConfig.TunnelIPs, proxy_manager.hostMapping, tcpConfig.Enabled, onNewIP)
+		proxy_manager.dnsProxy.SetTransparentProxyConfig(tcpConfig.TunnelIPs, proxy_manager.hostMapping, tcpConfig.IsEnabled(), onNewIP)
 	}
 
 	log.Printf("TCP proxy started with %d listeners", proxy_manager.tcpProxy.GetListenerCount())
