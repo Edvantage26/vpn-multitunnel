@@ -775,7 +775,7 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 
 	// --- Step 4: TCP Proxy state ---
 	tcpProxyConfig := app.config.TCPProxy
-	diagnostics.TCPProxyEnabled = tcpProxyConfig.Enabled
+	diagnostics.TCPProxyEnabled = tcpProxyConfig.IsEnabled()
 	diagnostics.TCPProxyTunnelIPs = tcpProxyConfig.TunnelIPs
 	diagnostics.TCPProxyListenerCount = app.tunnelManager.GetTCPProxyListenerCount()
 
@@ -783,7 +783,7 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 	diagnostics.ProfileHasTunnelIP = profileHasTunnelIP
 	diagnostics.ProfileTunnelIP = profileTunnelIP
 
-	if !tcpProxyConfig.Enabled {
+	if !tcpProxyConfig.IsEnabled() {
 		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
 			Name:   "TCP Proxy Enabled",
 			Status: "fail",
