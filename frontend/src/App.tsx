@@ -131,6 +131,13 @@ export interface DNSDiagnosticDetail {
   matchedRuleProfile?: string
   matchedRuleDns?: string
   tunnelConnected: boolean
+  tcpProxyEnabled: boolean
+  tcpProxyTunnelIPs: Record<string, string>
+  profileHasTunnelIP: boolean
+  profileTunnelIP?: string
+  tcpProxyListenerCount: number
+  resolvedToLoopback: boolean
+  resolvedAddress?: string
   directTunnelDnsResult?: string
   directTunnelDnsOk: boolean
   proxyDirectResult?: string

@@ -504,12 +504,12 @@ func (app *App) TestHost(hostname string, port int, profileID string, useSystemD
 		resolvedIPs, lookupErr := net.LookupHost(hostname)
 		if lookupErr != nil {
 			result.DNSError = fmt.Sprintf("System DNS resolution failed: %v", lookupErr)
-			result.DNSDiagnostics = app.gatherDNSDiagnostics(hostname, matchingRule)
+			result.DNSDiagnostics = app.gatherDNSDiagnostics(hostname, matchingRule, "")
 			return result
 		}
 		if len(resolvedIPs) == 0 {
 			result.DNSError = "System DNS returned no addresses"
-			result.DNSDiagnostics = app.gatherDNSDiagnostics(hostname, matchingRule)
+			result.DNSDiagnostics = app.gatherDNSDiagnostics(hostname, matchingRule, "")
 			return result
 		}
 
@@ -552,6 +552,11 @@ func (app *App) TestHost(hostname string, port int, profileID string, useSystemD
 		// Record latency metric
 		if result.ProfileID != "" {
 			debug.RecordLatencySample(result.ProfileID, tcpTargetAddress, tcpElapsed, result.TCPConnected)
+		}
+
+		// Gather diagnostics on any failure: TCP error, or DNS returned real IP (transparent proxy not working)
+		if result.TCPError != "" || (result.DNSResolved && result.LoopbackIP == "") {
+			result.DNSDiagnostics = app.gatherDNSDiagnostics(hostname, matchingRule, resolvedAddress)
 		}
 
 		return result
@@ -682,11 +687,19 @@ func (app *App) TestHost(hostname string, port int, profileID string, useSystemD
 	return result
 }
 
-// gatherDNSDiagnostics runs an exhaustive diagnostic of the DNS chain when system DNS resolution fails.
-// It checks every link: system DNS config → DNS proxy → tunnel → remote DNS server.
-func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRuleInfo) *debug.DNSDiagnosticDetail {
+// gatherDNSDiagnostics runs an exhaustive diagnostic of the entire chain when DNS or TCP fails.
+// It checks every link: system DNS config → DNS proxy → tunnel → remote DNS → TCP proxy → transparent proxy.
+// resolvedAddress is the IP that system DNS returned (empty if DNS itself failed).
+func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRuleInfo, resolvedAddress string) *debug.DNSDiagnosticDetail {
 	diagnostics := &debug.DNSDiagnosticDetail{
-		Steps: []debug.DNSDiagnosticStep{},
+		Steps:           []debug.DNSDiagnosticStep{},
+		ResolvedAddress: resolvedAddress,
+	}
+
+	// Detect if system DNS returned a loopback (transparent proxy) or real IP
+	if resolvedAddress != "" {
+		isLoopback := strings.HasPrefix(resolvedAddress, "127.0.") && resolvedAddress != "127.0.0.1"
+		diagnostics.ResolvedToLoopback = isLoopback
 	}
 
 	// --- Step 1: DNS Proxy enabled? ---
@@ -722,7 +735,6 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 			Detail: fmt.Sprintf("Hostname matches rule '%s' → profile '%s' (DNS: %s)", matchingRule.Suffix, matchingRule.ProfileName, matchingRule.DNSServer),
 		})
 	} else {
-		// List configured suffixes for the error
 		var configuredSuffixes []string
 		for _, rule := range app.config.DNSProxy.Rules {
 			configuredSuffixes = append(configuredSuffixes, rule.Suffix)
@@ -761,7 +773,75 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 		return diagnostics
 	}
 
-	// --- Step 4: Service connected? ---
+	// --- Step 4: TCP Proxy state ---
+	tcpProxyConfig := app.config.TCPProxy
+	diagnostics.TCPProxyEnabled = tcpProxyConfig.Enabled
+	diagnostics.TCPProxyTunnelIPs = tcpProxyConfig.TunnelIPs
+	diagnostics.TCPProxyListenerCount = app.tunnelManager.GetTCPProxyListenerCount()
+
+	profileTunnelIP, profileHasTunnelIP := tcpProxyConfig.TunnelIPs[matchingRule.ProfileID]
+	diagnostics.ProfileHasTunnelIP = profileHasTunnelIP
+	diagnostics.ProfileTunnelIP = profileTunnelIP
+
+	if !tcpProxyConfig.Enabled {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "TCP Proxy Enabled",
+			Status: "fail",
+			Detail: "TCP proxy is DISABLED. The DNS proxy will return real IPs instead of loopback IPs, and TCP connections cannot be routed through the tunnel.",
+			Fix:    "Enable the TCP proxy in the app configuration. Go to the profile's TCP Proxy section and ensure it's enabled.",
+		})
+		if resolvedAddress != "" && !diagnostics.ResolvedToLoopback {
+			diagnostics.RootCause = fmt.Sprintf("TCP proxy is disabled — DNS resolved to real IP %s but the system has no route to reach it (it's only accessible through the VPN tunnel)", resolvedAddress)
+		}
+	} else if !profileHasTunnelIP {
+		// TCP proxy enabled but this profile has no tunnel IP assigned
+		var allAssignments []string
+		for assignedProfileID, assignedIP := range tcpProxyConfig.TunnelIPs {
+			allAssignments = append(allAssignments, fmt.Sprintf("%s=%s", assignedProfileID, assignedIP))
+		}
+		assignmentsDisplay := "none"
+		if len(allAssignments) > 0 {
+			assignmentsDisplay = strings.Join(allAssignments, ", ")
+		}
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "TCP Proxy — Profile Tunnel IP",
+			Status: "fail",
+			Detail: fmt.Sprintf("Profile '%s' (ID: %s) has NO loopback IP assigned in tcpProxy.tunnelIPs. Current assignments: [%s]", matchingRule.ProfileName, matchingRule.ProfileID, assignmentsDisplay),
+			Fix:    fmt.Sprintf("Assign a loopback IP (e.g., 127.0.1.1) to profile '%s' in the TCP proxy configuration. This is required for the transparent proxy to intercept connections.", matchingRule.ProfileName),
+		})
+		if diagnostics.RootCause == "" {
+			diagnostics.RootCause = fmt.Sprintf("Profile '%s' has no loopback IP in tcpProxy.tunnelIPs — the DNS proxy returns the real IP (%s) instead of a loopback, so TCP goes through the normal network stack which can't reach the VPN-only host", matchingRule.ProfileName, resolvedAddress)
+		}
+	} else {
+		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+			Name:   "TCP Proxy — Profile Tunnel IP",
+			Status: "ok",
+			Detail: fmt.Sprintf("Profile '%s' has loopback IP %s assigned. TCP proxy has %d active listeners.", matchingRule.ProfileName, profileTunnelIP, diagnostics.TCPProxyListenerCount),
+		})
+	}
+
+	// --- Step 5: Loopback IP check (did DNS return loopback or real IP?) ---
+	if resolvedAddress != "" {
+		if diagnostics.ResolvedToLoopback {
+			diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+				Name:   "DNS → Loopback IP",
+				Status: "ok",
+				Detail: fmt.Sprintf("System DNS returned loopback IP %s (transparent proxy is active)", resolvedAddress),
+			})
+		} else {
+			diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
+				Name:   "DNS → Loopback IP",
+				Status: "fail",
+				Detail: fmt.Sprintf("System DNS returned real IP %s instead of a loopback IP. The transparent proxy is NOT intercepting this hostname.", resolvedAddress),
+				Fix:    "The DNS proxy should return a loopback IP (127.0.x.1) when transparent proxy is configured. Check that the TCP proxy is enabled and has a tunnel IP assigned for this profile.",
+			})
+			if diagnostics.RootCause == "" {
+				diagnostics.RootCause = fmt.Sprintf("DNS returned real IP %s instead of loopback — TCP connection goes through normal network stack which cannot reach VPN-only hosts", resolvedAddress)
+			}
+		}
+	}
+
+	// --- Step 6: Service connected? ---
 	serviceConnected := false
 	if app.networkConfig != nil {
 		serviceConnected = app.networkConfig.IsServiceConnected()
@@ -782,7 +862,7 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 		})
 	}
 
-	// --- Step 5: DNS Client (Dnscache) status ---
+	// --- Step 7: DNS Client (Dnscache) status ---
 	dnsClientRunning := system.IsDNSClientRunning()
 	diagnostics.DNSClientRunning = dnsClientRunning
 	if !dnsClientRunning {
@@ -800,7 +880,7 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 		})
 	}
 
-	// --- Step 6: System DNS configuration ---
+	// --- Step 8: System DNS configuration ---
 	expectedDNSAddress := "127.0.0.53"
 	if app.networkConfig != nil {
 		expectedDNSAddress = app.networkConfig.GetDNSProxyAddress()
@@ -845,11 +925,12 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 			Detail: fmt.Sprintf("Interface '%s' DNS is [%s] but should be [%s]. System DNS is NOT pointing to our proxy!", activeInterface, currentDNSDisplay, expectedDNSAddress),
 			Fix:    "Click 'Configure DNS' in the app or disconnect/reconnect the VPN. The system DNS should be automatically set to " + expectedDNSAddress + " when a tunnel connects.",
 		})
-		diagnostics.RootCause = fmt.Sprintf("System DNS is [%s] instead of [%s] — DNS queries are going to an external server, not our proxy", currentDNSDisplay, expectedDNSAddress)
-		// Don't return yet — continue gathering info for completeness
+		if diagnostics.RootCause == "" {
+			diagnostics.RootCause = fmt.Sprintf("System DNS is [%s] instead of [%s] — DNS queries are going to an external server, not our proxy", currentDNSDisplay, expectedDNSAddress)
+		}
 	}
 
-	// --- Step 7: DNS proxy direct test (send query directly to proxy, bypassing system DNS) ---
+	// --- Step 9: DNS proxy direct test (send query directly to proxy, bypassing system DNS) ---
 	proxyTestAddress := fmt.Sprintf("%s:53", expectedDNSAddress)
 	dnsClient := &dns.Client{
 		Net:     "udp",
@@ -889,7 +970,6 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 			diagnostics.RootCause = fmt.Sprintf("DNS proxy is running but remote DNS (%s) returned %s — hostname '%s' may not exist in the remote network", matchingRule.DNSServer, rcodeName, hostname)
 		}
 	} else if dnsResponse != nil {
-		// Extract resolved IP
 		var resolvedIP string
 		for _, answerRecord := range dnsResponse.Answer {
 			if aRecord, isARecord := answerRecord.(*dns.A); isARecord {
@@ -905,13 +985,12 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 			Detail: fmt.Sprintf("Direct query to proxy resolved '%s' → %s", hostname, resolvedIP),
 		})
 
-		// If proxy works but system DNS failed, the problem is definitely in the system DNS chain
-		if diagnostics.RootCause == "" {
+		if diagnostics.RootCause == "" && resolvedAddress == "" {
 			diagnostics.RootCause = "DNS proxy resolves correctly but system DNS is not reaching it — check system DNS settings and Dnscache"
 		}
 	}
 
-	// --- Step 8: Direct tunnel DNS test (bypass everything, query remote DNS through tunnel) ---
+	// --- Step 10: Direct tunnel DNS test (bypass everything, query remote DNS through tunnel) ---
 	if tunnelConnected && matchingRule.DNSServer != "" {
 		directIP, directErr := app.tunnelManager.ResolveViaTunnel(matchingRule.ProfileID, hostname, matchingRule.DNSServer)
 		if directErr != nil {
@@ -939,7 +1018,7 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 
 	// --- Final root cause if not set ---
 	if diagnostics.RootCause == "" {
-		diagnostics.RootCause = "DNS resolution failed through the system but the exact cause could not be determined. Check all diagnostic steps above."
+		diagnostics.RootCause = "The exact cause could not be determined automatically. Check all diagnostic steps above for clues."
 	}
 
 	return diagnostics

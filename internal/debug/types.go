@@ -37,7 +37,7 @@ type DNSDiagnosticStep struct {
 	Fix     string `json:"fix,omitempty"`     // How to fix if failed
 }
 
-// DNSDiagnosticDetail contains exhaustive diagnostic info when DNS resolution fails
+// DNSDiagnosticDetail contains exhaustive diagnostic info when DNS or TCP fails
 type DNSDiagnosticDetail struct {
 	// Chain steps - ordered diagnostic checks
 	Steps []DNSDiagnosticStep `json:"steps"`
@@ -58,6 +58,15 @@ type DNSDiagnosticDetail struct {
 	MatchedRuleProfile  string `json:"matchedRuleProfile,omitempty"`
 	MatchedRuleDNS      string `json:"matchedRuleDns,omitempty"`
 	TunnelConnected     bool   `json:"tunnelConnected"`
+
+	// TCP Proxy state
+	TCPProxyEnabled       bool              `json:"tcpProxyEnabled"`
+	TCPProxyTunnelIPs     map[string]string `json:"tcpProxyTunnelIPs"`     // all configured profileID -> loopback IP
+	ProfileHasTunnelIP    bool              `json:"profileHasTunnelIP"`    // does THIS profile have a tunnelIP?
+	ProfileTunnelIP       string            `json:"profileTunnelIP,omitempty"` // the assigned loopback IP for this profile
+	TCPProxyListenerCount int               `json:"tcpProxyListenerCount"`
+	ResolvedToLoopback    bool              `json:"resolvedToLoopback"`    // did DNS return a loopback IP?
+	ResolvedAddress       string            `json:"resolvedAddress,omitempty"` // what the system DNS actually returned
 
 	// Direct tunnel test (bypassing system DNS)
 	DirectTunnelDNSResult string `json:"directTunnelDnsResult,omitempty"` // IP or error

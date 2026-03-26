@@ -322,8 +322,8 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
                   </div>
                 )}
 
-                {/* DNS Failure Diagnostics */}
-                {resultStatus === 'dns_fail' && testResult.dnsDiagnostics && (
+                {/* Full diagnostics — shown on any failure (DNS or TCP) when diagnostics are available */}
+                {(resultStatus === 'dns_fail' || resultStatus === 'tcp_fail') && testResult.dnsDiagnostics && (
                   <div className="mt-2 pt-2 border-t border-dark-700/50">
                     {/* Root cause banner */}
                     <div className="bg-red-900/30 border border-red-700/40 rounded px-3 py-2 mb-3">
@@ -391,6 +391,43 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
                             </tr>
                             <tr><td className="px-2.5 py-1 text-dark-500">DNS Proxy</td><td className="px-2.5 py-1 font-mono text-dark-300">{testResult.dnsDiagnostics.dnsProxyEnabled ? `Enabled (port ${testResult.dnsDiagnostics.dnsProxyListenPort})` : 'Disabled'}</td></tr>
                             <tr>
+                              <td className="px-2.5 py-1 text-dark-500">TCP Proxy</td>
+                              <td className="px-2.5 py-1">
+                                <span className={`font-mono ${testResult.dnsDiagnostics.tcpProxyEnabled ? 'text-green-400' : 'text-red-400'}`}>
+                                  {testResult.dnsDiagnostics.tcpProxyEnabled ? `Enabled (${testResult.dnsDiagnostics.tcpProxyListenerCount} listeners)` : 'DISABLED'}
+                                </span>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className="px-2.5 py-1 text-dark-500">Profile Tunnel IP</td>
+                              <td className="px-2.5 py-1">
+                                <span className={`font-mono ${testResult.dnsDiagnostics.profileHasTunnelIP ? 'text-green-400' : 'text-red-400'}`}>
+                                  {testResult.dnsDiagnostics.profileHasTunnelIP ? testResult.dnsDiagnostics.profileTunnelIP : 'NOT ASSIGNED'}
+                                </span>
+                              </td>
+                            </tr>
+                            {testResult.dnsDiagnostics.tcpProxyTunnelIPs && Object.keys(testResult.dnsDiagnostics.tcpProxyTunnelIPs).length > 0 && (
+                              <tr>
+                                <td className="px-2.5 py-1 text-dark-500">All Tunnel IPs</td>
+                                <td className="px-2.5 py-1 font-mono text-dark-300">
+                                  {Object.entries(testResult.dnsDiagnostics.tcpProxyTunnelIPs).map(([profileId, tunnelIP]) => (
+                                    <div key={profileId}>{tunnelIP} → {profileId.substring(0, 8)}...</div>
+                                  ))}
+                                </td>
+                              </tr>
+                            )}
+                            {testResult.dnsDiagnostics.resolvedAddress && (
+                              <tr>
+                                <td className="px-2.5 py-1 text-dark-500">DNS Returned</td>
+                                <td className="px-2.5 py-1">
+                                  <span className={`font-mono ${testResult.dnsDiagnostics.resolvedToLoopback ? 'text-green-400' : 'text-yellow-400'}`}>
+                                    {testResult.dnsDiagnostics.resolvedAddress}
+                                    {testResult.dnsDiagnostics.resolvedToLoopback ? ' (loopback)' : ' (real IP — no transparent proxy)'}
+                                  </span>
+                                </td>
+                              </tr>
+                            )}
+                            <tr>
                               <td className="px-2.5 py-1 text-dark-500">Dnscache Service</td>
                               <td className="px-2.5 py-1">
                                 <span className={`font-mono ${testResult.dnsDiagnostics.dnsClientRunning ? 'text-yellow-400' : 'text-green-400'}`}>
@@ -455,8 +492,8 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
                   </div>
                 )}
 
-                {/* TCP Failure */}
-                {resultStatus === 'tcp_fail' && (
+                {/* TCP Failure without diagnostics (fallback — e.g. connection refused, not a proxy issue) */}
+                {resultStatus === 'tcp_fail' && !testResult.dnsDiagnostics && (
                   <div className="mt-2 pt-2 border-t border-dark-700/50 text-dark-400">
                     <span className="font-medium text-dark-300">Possible causes:</span>
                     <ul className="mt-1 space-y-0.5 list-disc list-inside text-dark-500">
