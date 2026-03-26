@@ -7,12 +7,13 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"vpnmultitunnel/internal/system"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -329,11 +330,11 @@ func (app *App) DownloadAndInstallUpdate() error {
 
 	log.Printf("[updater] Installer downloaded to: %s", installer_path)
 
-	// Launch the installer
-	installer_cmd := exec.Command(installer_path)
-	if start_err := installer_cmd.Start(); start_err != nil {
+	// Launch the installer with elevation (NSIS installer needs admin to write
+	// to Program Files, install the service, create loopback IPs, etc.)
+	if elevate_err := system.RunElevated(installer_path, ""); elevate_err != nil {
 		os.Remove(installer_path)
-		return fmt.Errorf("launching installer: %w", start_err)
+		return fmt.Errorf("launching installer: %w", elevate_err)
 	}
 
 	log.Printf("[updater] Installer launched, quitting application...")
