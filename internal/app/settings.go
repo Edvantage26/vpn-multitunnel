@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -132,4 +133,18 @@ func (app *App) GetAppPath() string {
 		return "unknown"
 	}
 	return filepath.Dir(execPath)
+}
+
+// GetDataPath returns the directory where configuration data is stored
+func (app *App) GetDataPath() string {
+	dataDirectoryPath, err := config.GetDataDir()
+	if err != nil {
+		return "unknown"
+	}
+	return dataDirectoryPath
+}
+
+// OpenFolderInExplorer opens the given folder path in Windows Explorer
+func (app *App) OpenFolderInExplorer(folderPath string) error {
+	return exec.Command("explorer", folderPath).Start()
 }

@@ -2,7 +2,12 @@ package app
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"os/exec"
 	"strings"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"vpnmultitunnel/internal/config"
 	"vpnmultitunnel/internal/system"
@@ -157,4 +162,25 @@ func (app *App) GetLoopbackIPs() map[string]string {
 	}
 
 	return result
+}
+
+// RestartApp launches a new instance of the application and quits the current one.
+// The single-instance mechanism handles graceful handoff between old and new process.
+func (app *App) RestartApp() {
+	executablePath, executableErr := os.Executable()
+	if executableErr != nil {
+		log.Printf("Failed to get executable path for restart: %v", executableErr)
+		return
+	}
+
+	restartCmd := exec.Command(executablePath)
+	restartCmd.Stdout = os.Stdout
+	restartCmd.Stderr = os.Stderr
+	if startErr := restartCmd.Start(); startErr != nil {
+		log.Printf("Failed to start new instance for restart: %v", startErr)
+		return
+	}
+
+	log.Printf("Restart: new instance launched (PID %d), quitting current instance", restartCmd.Process.Pid)
+	wailsruntime.Quit(app.ctx)
 }

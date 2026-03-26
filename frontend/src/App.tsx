@@ -197,6 +197,8 @@ declare global {
           SaveConfigFileContent: (profileId: string, content: string) => Promise<void>
 ReorderProfiles: (orderedIDs: string[]) => Promise<void>
           GetAppPath: () => Promise<string>
+          GetDataPath: () => Promise<string>
+          OpenFolderInExplorer: (folderPath: string) => Promise<void>
           TestDNSConnectivity: (address: string) => Promise<{ proxyListening: boolean; systemDNSConfigured: boolean; querySuccess: boolean; resolvedIP: string; error: string }>
           ExportConfiguration: () => Promise<void>
           ImportConfiguration: () => Promise<void>

@@ -26,6 +26,7 @@ type VPNStatus struct {
 type AppInterface interface {
 	ConnectAll() error
 	DisconnectAll() error
+	RestartApp()
 }
 
 // SystemTray manages the system tray icon and menu
@@ -246,6 +247,14 @@ func (systemTray *SystemTray) onReady() {
 	menuDisconnectAll.Click(func() {
 		if systemTray.app != nil {
 			go systemTray.app.DisconnectAll()
+		}
+	})
+
+	// Restart
+	menuRestart := systray.AddMenuItem("Restart", "Restart the application")
+	menuRestart.Click(func() {
+		if systemTray.app != nil {
+			go systemTray.app.RestartApp()
 		}
 	})
 

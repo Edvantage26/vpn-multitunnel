@@ -19,6 +19,7 @@ type SettingsTab = 'general' | 'dns' | 'about'
 function SettingsModal({ onClose, onOpenChangelog }: SettingsModalProps) {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [appPath, setAppPath] = useState('')
+  const [dataPath, setDataPath] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -44,9 +45,10 @@ function SettingsModal({ onClose, onOpenChangelog }: SettingsModalProps) {
 
   const loadSettings = async () => {
     try {
-      const [loaded_settings, loaded_app_path, loaded_dns_status, loaded_profiles, loaded_app_version, loaded_cached_update] = await Promise.all([
+      const [loaded_settings, loaded_app_path, loaded_data_path, loaded_dns_status, loaded_profiles, loaded_app_version, loaded_cached_update] = await Promise.all([
         window.go.app.App.GetSettings(),
         window.go.app.App.GetAppPath(),
+        window.go.app.App.GetDataPath(),
         window.go.app.App.GetSystemStatus(),
         window.go.app.App.GetProfiles(),
         window.go.app.App.GetAppVersion(),
@@ -57,6 +59,7 @@ function SettingsModal({ onClose, onOpenChangelog }: SettingsModalProps) {
       setOriginalDnsListenAddress(typed_settings.dnsListenAddress)
       setOriginalFallbackServer(typed_settings.dnsFallbackServer)
       setAppPath(loaded_app_path)
+      setDataPath(loaded_data_path)
       setDnsStatus(loaded_dns_status)
       const active_count = (loaded_profiles || []).filter((profile_status: { connected: boolean }) => profile_status.connected).length
       setConnectedTunnelCount(active_count)
@@ -274,8 +277,38 @@ function SettingsModal({ onClose, onOpenChangelog }: SettingsModalProps) {
               {/* App Path */}
               <div>
                 <label className="block text-sm text-dark-300 mb-1">Application Path</label>
-                <div className="px-3 py-2 bg-dark-800 border border-dark-600 rounded text-dark-400 font-mono text-xs select-all">
-                  {appPath}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded text-dark-400 font-mono text-xs select-all">
+                    {appPath}
+                  </div>
+                  <button
+                    onClick={() => window.go.app.App.OpenFolderInExplorer(appPath)}
+                    className="p-2 text-dark-400 hover:text-dark-200 hover:bg-dark-700 rounded transition-colors"
+                    title="Open in Explorer"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Data Path */}
+              <div>
+                <label className="block text-sm text-dark-300 mb-1">Data Path</label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 px-3 py-2 bg-dark-800 border border-dark-600 rounded text-dark-400 font-mono text-xs select-all">
+                    {dataPath}
+                  </div>
+                  <button
+                    onClick={() => window.go.app.App.OpenFolderInExplorer(dataPath)}
+                    className="p-2 text-dark-400 hover:text-dark-200 hover:bg-dark-700 rounded transition-colors"
+                    title="Open in Explorer"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                    </svg>
+                  </button>
                 </div>
               </div>
 
