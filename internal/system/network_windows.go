@@ -154,9 +154,6 @@ func hideWindow(cmd *exec.Cmd) {
 
 // EnsureLoopbackIPs ensures the required loopback IPs are configured
 func (network_config *NetworkConfig) EnsureLoopbackIPs(ips []string) error {
-	network_config.mu.Lock()
-	defer network_config.mu.Unlock()
-
 	if !IsAdmin() {
 		return fmt.Errorf("administrator privileges required to configure loopback IPs")
 	}
@@ -177,7 +174,9 @@ func (network_config *NetworkConfig) EnsureLoopbackIPs(ips []string) error {
 			log.Printf("Failed to add loopback IP %s: %v", ip, err)
 			// Continue with other IPs
 		} else {
+			network_config.mu.Lock()
 			network_config.configuredIPs = append(network_config.configuredIPs, ip)
+			network_config.mu.Unlock()
 			log.Printf("Added loopback IP %s", ip)
 		}
 	}
@@ -205,8 +204,8 @@ func (network_config *NetworkConfig) loopbackIPExists(ip string) bool {
 	// Try ping - fastest and most reliable check
 	cmd := exec.Command("ping", "-n", "1", "-w", "100", ip)
 	hideWindow(cmd)
-	err := cmd.Run()
-	if err == nil {
+	pingErr := cmd.Run()
+	if pingErr == nil {
 		// IP responded, add to cache
 		network_config.mu.Lock()
 		network_config.configuredIPs = append(network_config.configuredIPs, ip)
@@ -215,13 +214,13 @@ func (network_config *NetworkConfig) loopbackIPExists(ip string) bool {
 	}
 
 	// Fallback: Use netsh to check if IP exists
-	cmd2 := exec.Command("netsh", "interface", "ipv4", "show", "ipaddresses", "interface=Loopback Pseudo-Interface 1")
-	hideWindow(cmd2)
-	output, err := cmd2.Output()
-	if err != nil {
+	netshCmd := exec.Command("netsh", "interface", "ipv4", "show", "ipaddresses", "interface=Loopback Pseudo-Interface 1")
+	hideWindow(netshCmd)
+	netshOutput, netshErr := netshCmd.Output()
+	if netshErr != nil {
 		return false
 	}
-	exists := strings.Contains(string(output), ip)
+	exists := strings.Contains(string(netshOutput), ip)
 	if exists {
 		network_config.mu.Lock()
 		network_config.configuredIPs = append(network_config.configuredIPs, ip)
