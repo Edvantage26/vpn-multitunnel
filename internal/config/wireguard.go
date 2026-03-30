@@ -188,13 +188,8 @@ func ProfileFromWireGuardConfig(wgConfig *WireGuardConfig, configFilePath string
 		targetIP = strings.Split(wgConfig.Interface.Address[0], "/")[0]
 	}
 
-	// Get DNS server if configured
-	var dnsServer string
-	if len(wgConfig.Interface.DNS) > 0 {
-		dnsServer = wgConfig.Interface.DNS[0]
-	}
-
 	_ = endpoint // Could be used for display
+	_ = targetIP // TargetIP is now resolved from .conf at runtime
 
 	return &Profile{
 		ID:         id,
@@ -203,11 +198,9 @@ func ProfileFromWireGuardConfig(wgConfig *WireGuardConfig, configFilePath string
 		Enabled:    true,
 		HealthCheck: HealthCheck{
 			Enabled:         true,
-			TargetIP:        targetIP,
 			IntervalSeconds: 30,
 		},
 		DNS: ProfileDNS{
-			Server:  dnsServer,
 			Domains: []string{},
 		},
 	}

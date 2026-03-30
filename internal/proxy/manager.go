@@ -18,15 +18,19 @@ type TunnelDialer interface {
 // TunnelGetter is a function that returns a tunnel for a profile ID
 type TunnelGetter func(profileID string) TunnelDialer
 
+// DNSServerGetter is a function that returns the DNS server for a profile ID
+type DNSServerGetter func(profileID string) string
+
 // Manager manages all proxy servers
 type Manager struct {
-	dnsProxy       *DNSProxy
-	tcpProxy       *TCPProxy
-	hostMapping    *HostMappingCache
-	tunnelGetter   TunnelGetter
+	dnsProxy         *DNSProxy
+	tcpProxy         *TCPProxy
+	hostMapping      *HostMappingCache
+	tunnelGetter     TunnelGetter
+	dnsServerGetter  DNSServerGetter
 	// Callback for configuring new loopback IPs (set by app)
 	onConfigureLoopbackIP func(ip string) error
-	mu             sync.RWMutex
+	mu               sync.RWMutex
 }
 
 // NewManager creates a new proxy manager
@@ -52,7 +56,7 @@ func (proxy_manager *Manager) StopAllForProfile(profileID string) {
 }
 
 // StartDNSProxy starts the global DNS proxy
-func (proxy_manager *Manager) StartDNSProxy(dnsConfig *config.DNSProxy, tunnelGetter TunnelGetter) error {
+func (proxy_manager *Manager) StartDNSProxy(dnsConfig *config.DNSProxy, tunnelGetter TunnelGetter, dnsServerGetter DNSServerGetter) error {
 	proxy_manager.mu.Lock()
 	defer proxy_manager.mu.Unlock()
 
@@ -61,8 +65,9 @@ func (proxy_manager *Manager) StartDNSProxy(dnsConfig *config.DNSProxy, tunnelGe
 	}
 
 	proxy_manager.tunnelGetter = tunnelGetter
+	proxy_manager.dnsServerGetter = dnsServerGetter
 
-	proxy, err := NewDNSProxy(dnsConfig, proxy_manager.getDNSDialer)
+	proxy, err := NewDNSProxy(dnsConfig, proxy_manager.getDNSDialer, proxy_manager.getDNSServerForProfile)
 	if err != nil {
 		return err
 	}
@@ -192,6 +197,14 @@ func (proxy_manager *Manager) GetActiveConnections() []ActiveConnection {
 // GetHostMapping returns the host mapping cache (for external use)
 func (proxy_manager *Manager) GetHostMapping() *HostMappingCache {
 	return proxy_manager.hostMapping
+}
+
+// getDNSServerForProfile returns the DNS server for a profile ID
+func (proxy_manager *Manager) getDNSServerForProfile(profileID string) string {
+	if proxy_manager.dnsServerGetter == nil {
+		return ""
+	}
+	return proxy_manager.dnsServerGetter(profileID)
 }
 
 // getDNSDialer returns a dialer function for a profile ID

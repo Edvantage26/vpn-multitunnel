@@ -51,9 +51,20 @@ func (app *App) GetProfiles() []ProfileStatus {
 	return result
 }
 
-// GetProfile returns a single profile by ID
+// GetProfile returns a single profile by ID, with computed fields populated from the WireGuard .conf
 func (app *App) GetProfile(id string) (*config.Profile, error) {
-	return app.profileService.GetByID(id)
+	profile, err := app.profileService.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	app.populateComputedFields(profile)
+	return profile, nil
+}
+
+// populateComputedFields fills read-only fields (DNS server, TargetIP) from the WireGuard .conf
+func (app *App) populateComputedFields(profile *config.Profile) {
+	profile.DNS.Server = app.tunnelManager.GetDNSServerForProfile(profile.ID)
+	profile.HealthCheck.TargetIP = app.tunnelManager.GetTargetIPForProfile(profile.ID)
 }
 
 // Connect connects a profile by ID (with UAC elevation if needed)
@@ -291,12 +302,16 @@ func (app *App) CreateConfigFromText(config_name string, config_content string) 
 
 // UpdateProfile updates a profile
 func (app *App) UpdateProfile(profile config.Profile) error {
+	// Strip computed fields before saving (these are resolved from .conf at runtime)
+	profile.DNS.Server = ""
+	profile.HealthCheck.TargetIP = ""
+
 	if err := app.profileService.Update(profile); err != nil {
 		return err
 	}
 
-	// Sync DNS settings to global DNS rules
-	app.syncProfileDNSToRules(profile)
+	// Rebuild DNS rules from profiles and restart DNS proxy
+	app.tunnelManager.RestartDNSProxy(&app.config.DNSProxy)
 
 	// Restart TCP proxy to pick up per-profile port changes
 	if app.config.TCPProxy.IsEnabled() {
@@ -311,49 +326,3 @@ func (app *App) ReorderProfiles(orderedIDs []string) error {
 	return app.profileService.Reorder(orderedIDs)
 }
 
-// syncProfileDNSToRules syncs a profile's DNS settings to the global DNS proxy rules
-func (app *App) syncProfileDNSToRules(profile config.Profile) {
-	if profile.DNS.Server == "" || len(profile.DNS.Domains) == 0 {
-		return
-	}
-
-	// Find or create rules for each domain suffix
-	for _, domain := range profile.DNS.Domains {
-		suffix := domain
-		if !strings.HasPrefix(suffix, ".") {
-			suffix = "." + suffix
-		}
-
-		// Find existing rule for this suffix
-		found := false
-		for idx_rule := range app.config.DNSProxy.Rules {
-			if app.config.DNSProxy.Rules[idx_rule].Suffix == suffix && app.config.DNSProxy.Rules[idx_rule].ProfileID == profile.ID {
-				// Update existing rule
-				app.config.DNSProxy.Rules[idx_rule].DNSServer = profile.DNS.Server
-				app.config.DNSProxy.Rules[idx_rule].Hosts = profile.DNS.Hosts
-				found = true
-				break
-			}
-		}
-
-		// Create new rule if not found
-		if !found {
-			newRule := config.DNSRule{
-				Suffix:    suffix,
-				ProfileID: profile.ID,
-				DNSServer: profile.DNS.Server,
-				Hosts:     profile.DNS.Hosts,
-			}
-			app.config.DNSProxy.Rules = append(app.config.DNSProxy.Rules, newRule)
-		}
-	}
-
-	// Enable DNS proxy if not already
-	if !app.config.DNSProxy.Enabled && len(app.config.DNSProxy.Rules) > 0 {
-		app.config.DNSProxy.Enabled = true
-	}
-
-	// Save and restart DNS proxy
-	config.Save(app.config)
-	app.tunnelManager.RestartDNSProxy(&app.config.DNSProxy)
-}

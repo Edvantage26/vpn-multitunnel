@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // AppConfig is the root configuration structure
 type AppConfig struct {
 	Version  int       `json:"version"`
@@ -68,16 +70,16 @@ func (profile *Profile) GetTCPProxyPorts() []int {
 // HealthCheck configuration for a profile
 type HealthCheck struct {
 	Enabled         bool   `json:"enabled"`
-	TargetIP        string `json:"targetIP"`
+	TargetIP        string `json:"targetIP,omitempty"` // Read-only: resolved from WireGuard .conf Address at runtime, not persisted
 	IntervalSeconds int    `json:"intervalSeconds"`
 }
 
 // ProfileDNS configures DNS for a specific profile
 type ProfileDNS struct {
-	Server      string            `json:"server"`
-	Domains     []string          `json:"domains"`     // Domains that should use this profile's DNS
-	StripSuffix bool              `json:"stripSuffix"` // Strip suffix before querying DNS (e.g., db.svi -> db)
-	Hosts       map[string]string `json:"hosts"`       // Static host mappings (e.g., "db" -> "10.10.0.3")
+	Server      string            `json:"server,omitempty"` // Read-only: resolved from WireGuard .conf at runtime, not persisted
+	Domains     []string          `json:"domains"`          // Domains that should use this profile's DNS
+	StripSuffix bool              `json:"stripSuffix"`      // Strip suffix before querying DNS (e.g., db.svi -> db)
+	Hosts       map[string]string `json:"hosts"`            // Static host mappings (e.g., "db" -> "10.10.0.3")
 }
 
 // DNSProxy configures the global DNS proxy
@@ -85,7 +87,7 @@ type DNSProxy struct {
 	Enabled       bool      `json:"enabled"`
 	ListenAddress string    `json:"listenAddress"` // IP address to listen on (default: 127.0.0.53)
 	ListenPort    int       `json:"listenPort"`
-	Rules         []DNSRule `json:"rules"`
+	Rules         []DNSRule `json:"-"` // Generated at runtime from profiles, not persisted
 	Fallback      string    `json:"fallback"` // "system" or specific DNS server
 }
 
@@ -97,11 +99,10 @@ func (dns_proxy *DNSProxy) GetListenAddress() string {
 	return dns_proxy.ListenAddress
 }
 
-// DNSRule maps domain suffixes to profiles
+// DNSRule maps domain suffixes to profiles (generated at runtime from profiles)
 type DNSRule struct {
 	Suffix      string            `json:"suffix"`
 	ProfileID   string            `json:"profileId"`
-	DNSServer   string            `json:"dnsServer"`   // DNS server IP for this rule (e.g., "172.23.0.53")
 	StripSuffix *bool             `json:"stripSuffix"` // Strip suffix before querying (default: true)
 	Hosts       map[string]string `json:"hosts"`       // Static host mappings (e.g., "db" -> "10.10.0.3")
 }
@@ -112,6 +113,31 @@ func (dns_rule *DNSRule) ShouldStripSuffix() bool {
 		return true // Default: strip suffix
 	}
 	return *dns_rule.StripSuffix
+}
+
+// BuildDNSRulesFromProfiles generates DNS rules from profile DNS settings.
+// This replaces the old persisted rules — rules are now derived at runtime.
+func BuildDNSRulesFromProfiles(profiles []Profile) []DNSRule {
+	var rules []DNSRule
+	for _, profile := range profiles {
+		if len(profile.DNS.Domains) == 0 && len(profile.DNS.Hosts) == 0 {
+			continue
+		}
+		for _, domain := range profile.DNS.Domains {
+			suffix := domain
+			if !strings.HasPrefix(suffix, ".") {
+				suffix = "." + suffix
+			}
+			stripSuffix := profile.DNS.StripSuffix
+			rules = append(rules, DNSRule{
+				Suffix:      suffix,
+				ProfileID:   profile.ID,
+				StripSuffix: &stripSuffix,
+				Hosts:       profile.DNS.Hosts,
+			})
+		}
+	}
+	return rules
 }
 
 // TCPProxy configures the transparent TCP proxy
@@ -152,7 +178,6 @@ func Default() *AppConfig {
 		DNSProxy: DNSProxy{
 			Enabled:    false,
 			ListenPort: 10053,
-			Rules:      []DNSRule{},
 			Fallback:   "system",
 		},
 		TCPProxy: TCPProxy{

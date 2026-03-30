@@ -1,6 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { HostTestResult, DNSDiagnosticStep } from '../App'
 import { getServiceByPort } from '../data/servicePortRegistry'
+
+export interface QuickTestRequest {
+  hostname: string
+  timestamp: number
+}
+
+interface CachedTestState {
+  hostname: string
+  selectedPort: number | null
+  selectedSuffix: string
+  testResult: HostTestResult | null
+}
 
 interface ConnectionTesterProps {
   profileId: string
@@ -8,21 +20,48 @@ interface ConnectionTesterProps {
   isConnected: boolean
   domainSuffixes: string[]
   tcpProxyPorts: number[]
+  quickTestRequest?: QuickTestRequest | null
 }
 
-function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes, tcpProxyPorts }: ConnectionTesterProps) {
+// Module-level cache so it survives component remounts within the session
+const profileTestCache = new Map<string, CachedTestState>()
+
+function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes, tcpProxyPorts, quickTestRequest }: ConnectionTesterProps) {
   const [hostname, setHostname] = useState('')
   const [selectedPort, setSelectedPort] = useState<number | null>(null)
   const [selectedSuffix, setSelectedSuffix] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<HostTestResult | null>(null)
+  const previousProfileIdRef = useRef<string>(profileId)
 
-  // Reset state when profile changes; auto-select suffix if only one
+  // Save current state to cache, then restore or reset for new profile
   useEffect(() => {
-    setTestResult(null)
-    setSelectedSuffix(domainSuffixes.length === 1 ? domainSuffixes[0] : '')
-    setSelectedPort(null)
-  }, [profileId, domainSuffixes.length])
+    const previousProfileId = previousProfileIdRef.current
+    if (previousProfileId && previousProfileId !== profileId) {
+      // Save outgoing profile state
+      profileTestCache.set(previousProfileId, {
+        hostname,
+        selectedPort,
+        selectedSuffix,
+        testResult,
+      })
+    }
+    previousProfileIdRef.current = profileId
+
+    // Restore cached state or reset
+    const cachedState = profileTestCache.get(profileId)
+    if (cachedState) {
+      setHostname(cachedState.hostname)
+      setSelectedPort(cachedState.selectedPort)
+      setSelectedSuffix(cachedState.selectedSuffix)
+      setTestResult(cachedState.testResult)
+    } else {
+      setHostname('')
+      setTestResult(null)
+      setSelectedSuffix(domainSuffixes.length === 1 ? domainSuffixes[0] : '')
+      setSelectedPort(null)
+    }
+  }, [profileId])
 
   const buildFullHostname = (): string => {
     const trimmedHost = hostname.trim()
@@ -33,21 +72,16 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
     return trimmedHost
   }
 
-  const handleTest = async () => {
-    const fullHostname = buildFullHostname()
-    if (!fullHostname || !selectedPort) {
-      return
-    }
-
+  const runTest = useCallback(async (testHostname: string, testPort: number) => {
     setTesting(true)
     setTestResult(null)
 
     try {
-      const result = await window.go.app.App.TestHost(fullHostname, selectedPort, profileId, true)
+      const result = await window.go.app.App.TestHost(testHostname, testPort, profileId, true)
       setTestResult(result)
     } catch (error) {
       setTestResult({
-        hostname: fullHostname,
+        hostname: testHostname,
         profileId: profileId,
         profileName: profileName,
         dnsResolved: false,
@@ -58,17 +92,64 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
         dnsError: String(error),
         usedSystemDNS: true,
         tcpConnected: false,
-        tcpPort: selectedPort,
+        tcpPort: testPort,
         tcpLatencyMs: 0,
         tcpError: '',
       })
     } finally {
       setTesting(false)
     }
+  }, [profileId, profileName])
+
+  const handleTest = async () => {
+    const fullHostname = buildFullHostname()
+    if (!fullHostname || !selectedPort) {
+      return
+    }
+    runTest(fullHostname, selectedPort)
   }
 
+  // Handle quick test requests from host rows
+  const lastQuickTestTimestampRef = useRef<number>(0)
+  useEffect(() => {
+    if (!quickTestRequest || quickTestRequest.timestamp <= lastQuickTestTimestampRef.current) return
+    lastQuickTestTimestampRef.current = quickTestRequest.timestamp
+
+    const requestedHostname = quickTestRequest.hostname
+    // Parse hostname: try to match a domain suffix and extract the base
+    let parsedBase = requestedHostname
+    let parsedSuffix = ''
+    for (const suffix of domainSuffixes) {
+      if (requestedHostname.endsWith(`.${suffix}`)) {
+        parsedBase = requestedHostname.slice(0, -(suffix.length + 1))
+        parsedSuffix = suffix
+        break
+      }
+    }
+
+    // If no suffix matched and there's exactly one available, use it
+    if (!parsedSuffix && domainSuffixes.length === 1) {
+      parsedSuffix = domainSuffixes[0]
+    }
+
+    setHostname(parsedBase)
+    setSelectedSuffix(parsedSuffix)
+
+    // Pick first available port if none selected
+    const portToUse = selectedPort ?? (tcpProxyPorts.length > 0 ? Math.abs(tcpProxyPorts[0]) : null)
+    if (portToUse) {
+      setSelectedPort(portToUse)
+    }
+
+    // Build full hostname and run test
+    const fullHost = parsedSuffix ? `${parsedBase}.${parsedSuffix}` : parsedBase
+    if (fullHost && portToUse) {
+      runTest(fullHost, portToUse)
+    }
+  }, [quickTestRequest])
+
   const handleHostKeyPress = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !testing && hostname.trim() && selectedPort) {
+    if (event.key === 'Enter' && !testing && hostname.trim() && selectedPort && selectedSuffix) {
       handleTest()
     }
   }
@@ -76,7 +157,8 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
   // Detect if hostname looks like an IP address
   const looksLikeIP = /^(\d{1,3}\.){1,3}\d{1,3}$/.test(hostname.trim())
 
-  const isTestReady = hostname.trim() && selectedPort && !testing && !looksLikeIP
+  const hasSuffix = domainSuffixes.length > 0 && selectedSuffix !== ''
+  const isTestReady = hostname.trim() && selectedPort && hasSuffix && !testing && !looksLikeIP
   const fullHostname = buildFullHostname()
 
   // Determine overall result status
@@ -116,6 +198,10 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
         <div className="text-dark-500 text-xs italic">
           Connect the tunnel first to test connectivity.
         </div>
+      ) : domainSuffixes.length === 0 ? (
+        <div className="text-dark-500 text-xs italic">
+          Configure domain suffixes first to test connectivity.
+        </div>
       ) : tcpProxyPorts.length === 0 ? (
         <div className="text-dark-500 text-xs italic">
           Configure TCP proxy ports first to test connectivity.
@@ -148,7 +234,7 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
                   className="w-full input py-1.5 text-sm cursor-pointer"
                   disabled={testing}
                 >
-                  <option value="">None</option>
+                  {domainSuffixes.length > 1 && <option value="">Select suffix...</option>}
                   {domainSuffixes.map((suffix) => (
                     <option key={suffix} value={suffix}>.{suffix}</option>
                   ))}

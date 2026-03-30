@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Profile, ProfileStatus, ActiveConnection } from '../App'
 import ServicePortSelector from './ServicePortSelector'
-import ConnectionTester from './ConnectionTester'
+import ConnectionTester, { QuickTestRequest } from './ConnectionTester'
 
 // WireGuard config display type matching Go backend
 export interface WireGuardConfigDisplay {
@@ -61,6 +61,9 @@ function TunnelDetailPanel({
   const [addingHost, setAddingHost] = useState(false)
   const [newHostname, setNewHostname] = useState('')
   const [newIP, setNewIP] = useState('')
+
+  // Quick test request for ConnectionTester
+  const [quickTestRequest, setQuickTestRequest] = useState<QuickTestRequest | null>(null)
 
   // Domain suffix inline editing
   const [newSuffixInput, setNewSuffixInput] = useState('')
@@ -124,7 +127,6 @@ function TunnelDetailPanel({
       ...profile,
       healthCheck: {
         ...profile.healthCheck,
-        targetIP: healthIP,
         intervalSeconds: healthInterval
       }
     })
@@ -589,6 +591,17 @@ function TunnelDetailPanel({
                       <span className="text-dark-500">→</span>
                       <span className="text-yellow-400 font-mono">{ip_entry as string}</span>
                       <div className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                        {isConnected && (
+                          <button
+                            onClick={() => setQuickTestRequest({ hostname: hostname_entry, timestamp: Date.now() })}
+                            className="px-1.5 py-0.5 text-xs text-green-400 hover:text-green-300 hover:bg-green-900/30 rounded"
+                            title={`Test ${hostname_entry}`}
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                          </button>
+                        )}
                         <button onClick={() => handleEditManualHost(hostname_entry, ip_entry as string)} className="px-2 py-0.5 text-xs text-dark-300 hover:text-white hover:bg-dark-600 rounded">Edit</button>
                         <button onClick={() => handleDeleteManualHost(hostname_entry)} className="px-2 py-0.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded">Delete</button>
                       </div>
@@ -619,6 +632,17 @@ function TunnelDetailPanel({
                   <span className="text-dark-600">→</span>
                   <span className="text-green-400 font-mono">{detected_host.realIP}</span>
                   <span className="text-dark-600 ml-1">({detected_host.age})</span>
+                  <div className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => setQuickTestRequest({ hostname: detected_host.hostname, timestamp: Date.now() })}
+                      className="px-1.5 py-0.5 text-xs text-green-400 hover:text-green-300 hover:bg-green-900/30 rounded"
+                      title={`Test ${detected_host.hostname}`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -655,6 +679,7 @@ function TunnelDetailPanel({
         isConnected={isConnected}
         domainSuffixes={profile.dns.domains || []}
         tcpProxyPorts={profile.tcpProxyPorts || []}
+        quickTestRequest={quickTestRequest}
       />
 
       {/* Interface Section */}
@@ -749,13 +774,7 @@ function TunnelDetailPanel({
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-dark-400 w-20">Target IP:</span>
-                <input
-                  type="text"
-                  value={healthIP}
-                  onChange={(event) => setHealthIP(event.target.value)}
-                  className="flex-1 input py-1 text-sm"
-                  placeholder="e.g., 10.0.0.1"
-                />
+                <span className="flex-1 font-mono text-dark-300 text-sm">{profile.healthCheck.targetIP || '(from .conf)'}</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-dark-400 w-20">Interval:</span>

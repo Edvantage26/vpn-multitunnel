@@ -223,19 +223,21 @@ func (app *App) GetHostMappings() []debug.HostMappingInfo {
 func (app *App) GetDNSConfig() debug.DNSConfigInfo {
 	profileNames := app.GetProfileNames()
 
-	rules := make([]debug.DNSRuleInfo, 0, len(app.config.DNSProxy.Rules))
-	for _, r := range app.config.DNSProxy.Rules {
+	// Build rules from profiles at runtime
+	runtimeRules := config.BuildDNSRulesFromProfiles(app.config.Profiles)
+	rules := make([]debug.DNSRuleInfo, 0, len(runtimeRules))
+	for _, rule := range runtimeRules {
 		stripSuffix := true
-		if r.StripSuffix != nil {
-			stripSuffix = *r.StripSuffix
+		if rule.StripSuffix != nil {
+			stripSuffix = *rule.StripSuffix
 		}
 		rules = append(rules, debug.DNSRuleInfo{
-			Suffix:      r.Suffix,
-			ProfileID:   r.ProfileID,
-			ProfileName: profileNames[r.ProfileID],
-			DNSServer:   r.DNSServer,
+			Suffix:      rule.Suffix,
+			ProfileID:   rule.ProfileID,
+			ProfileName: profileNames[rule.ProfileID],
+			DNSServer:   app.tunnelManager.GetDNSServerForProfile(rule.ProfileID),
 			StripSuffix: stripSuffix,
-			Hosts:       r.Hosts,
+			Hosts:       rule.Hosts,
 		})
 	}
 
@@ -297,8 +299,12 @@ func (app *App) DiagnoseDNS(hostname string) debug.DNSDiagnostic {
 		}
 	}
 
+	resolvedDNSServer := app.tunnelManager.GetDNSServerForProfile(matchedRule.ProfileID)
+	if resolvedDNSServer == "" {
+		resolvedDNSServer = "(not configured)"
+	}
 	diagnostic.WouldResolve = true
-	diagnostic.Reason = fmt.Sprintf("Will resolve via tunnel DNS server %s (profile: %s)", matchedRule.DNSServer, matchedRule.ProfileName)
+	diagnostic.Reason = fmt.Sprintf("Will resolve via tunnel DNS server %s (profile: %s)", resolvedDNSServer, matchedRule.ProfileName)
 	return diagnostic
 }
 
@@ -322,16 +328,11 @@ func (app *App) QueryDNS(hostname string, queryType string, dnsServer string, pr
 		return result
 	}
 
-	// If no DNS server specified, try to find from config
+	// If no DNS server specified, resolve from WireGuard .conf
 	if dnsServer == "" {
-		for _, p := range app.config.Profiles {
-			if p.ID == profileID && p.DNS.Server != "" {
-				dnsServer = p.DNS.Server
-				break
-			}
-		}
+		dnsServer = app.tunnelManager.GetDNSServerForProfile(profileID)
 		if dnsServer == "" {
-			result.Error = "no DNS server specified and none configured for profile"
+			result.Error = "no DNS server specified and none configured in WireGuard .conf for profile"
 			return result
 		}
 		result.DNSServer = dnsServer
@@ -447,20 +448,21 @@ func (app *App) GetMatchingRule(hostname string) *debug.DNSRuleInfo {
 	hostname = strings.ToLower(hostname)
 	profileNames := app.GetProfileNames()
 
-	for _, r := range app.config.DNSProxy.Rules {
-		suffix := strings.ToLower(r.Suffix)
+	runtimeRules := config.BuildDNSRulesFromProfiles(app.config.Profiles)
+	for _, rule := range runtimeRules {
+		suffix := strings.ToLower(rule.Suffix)
 		if strings.HasSuffix(hostname, suffix) || hostname == strings.TrimPrefix(suffix, ".") {
 			stripSuffix := true
-			if r.StripSuffix != nil {
-				stripSuffix = *r.StripSuffix
+			if rule.StripSuffix != nil {
+				stripSuffix = *rule.StripSuffix
 			}
 			return &debug.DNSRuleInfo{
-				Suffix:      r.Suffix,
-				ProfileID:   r.ProfileID,
-				ProfileName: profileNames[r.ProfileID],
-				DNSServer:   r.DNSServer,
+				Suffix:      rule.Suffix,
+				ProfileID:   rule.ProfileID,
+				ProfileName: profileNames[rule.ProfileID],
+				DNSServer:   app.tunnelManager.GetDNSServerForProfile(rule.ProfileID),
 				StripSuffix: stripSuffix,
-				Hosts:       r.Hosts,
+				Hosts:       rule.Hosts,
 			}
 		}
 	}
@@ -600,20 +602,20 @@ func (app *App) TestHost(hostname string, port int, profileID string, useSystemD
 	}
 
 	// Find the DNS rule for this profile
-	var dnsServer string
+	dnsServer := app.tunnelManager.GetDNSServerForProfile(profileID)
 	var staticHosts map[string]string
 	var stripSuffix bool = true
 	var ruleSuffix string
-	for _, r := range app.config.DNSProxy.Rules {
-		if r.ProfileID == profileID {
-			dnsServer = r.DNSServer
-			staticHosts = r.Hosts
-			if r.StripSuffix != nil {
-				stripSuffix = *r.StripSuffix
+	runtimeRules := config.BuildDNSRulesFromProfiles(app.config.Profiles)
+	for _, rule := range runtimeRules {
+		if rule.ProfileID == profileID {
+			staticHosts = rule.Hosts
+			if rule.StripSuffix != nil {
+				stripSuffix = *rule.StripSuffix
 			}
-			ruleSuffix = r.Suffix
+			ruleSuffix = rule.Suffix
 			result.DNSServer = dnsServer
-			result.DNSRule = r.Suffix
+			result.DNSRule = rule.Suffix
 			break
 		}
 	}
@@ -651,11 +653,11 @@ func (app *App) TestHost(hostname string, port int, profileID string, useSystemD
 	// If not in cache/static and we have a DNS server, try to resolve
 	if !result.DNSResolved && dnsServer != "" {
 		// Try to resolve via tunnel DNS
-		ip, err := app.tunnelManager.ResolveViaTunnel(profileID, hostname, dnsServer)
-		if err != nil {
-			result.DNSError = err.Error()
+		resolvedIP, resolveErr := app.tunnelManager.ResolveViaTunnel(profileID, hostname)
+		if resolveErr != nil {
+			result.DNSError = resolveErr.Error()
 		} else {
-			result.RealIP = ip
+			result.RealIP = resolvedIP
 			result.DNSResolved = true
 		}
 	}
@@ -736,7 +738,8 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 		})
 	} else {
 		var configuredSuffixes []string
-		for _, rule := range app.config.DNSProxy.Rules {
+		diagnosticRules := config.BuildDNSRulesFromProfiles(app.config.Profiles)
+		for _, rule := range diagnosticRules {
 			configuredSuffixes = append(configuredSuffixes, rule.Suffix)
 		}
 		suffixList := "none configured"
@@ -956,9 +959,10 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 		diagnostics.ProxyDirectOk = false
 		rcodeName := dns.RcodeToString[dnsResponse.Rcode]
 		diagnostics.ProxyDirectResult = fmt.Sprintf("Response code: %s (%d)", rcodeName, dnsResponse.Rcode)
+		proxyStepDNSServer := app.tunnelManager.GetDNSServerForProfile(matchingRule.ProfileID)
 		fixMessage := "Check the hostname is correct and exists in the remote DNS server."
 		if dnsResponse.Rcode == dns.RcodeNameError {
-			fixMessage = fmt.Sprintf("The remote DNS server (%s) does not know this hostname. Verify the hostname is correct and that it exists in the remote network.", matchingRule.DNSServer)
+			fixMessage = fmt.Sprintf("The remote DNS server (%s) does not know this hostname. Verify the hostname is correct and that it exists in the remote network.", proxyStepDNSServer)
 		}
 		diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
 			Name:   "DNS Proxy Direct Query",
@@ -967,7 +971,7 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 			Fix:    fixMessage,
 		})
 		if diagnostics.RootCause == "" {
-			diagnostics.RootCause = fmt.Sprintf("DNS proxy is running but remote DNS (%s) returned %s — hostname '%s' may not exist in the remote network", matchingRule.DNSServer, rcodeName, hostname)
+			diagnostics.RootCause = fmt.Sprintf("DNS proxy is running but remote DNS (%s) returned %s — hostname '%s' may not exist in the remote network", proxyStepDNSServer, rcodeName, hostname)
 		}
 	} else if dnsResponse != nil {
 		var resolvedIP string
@@ -991,19 +995,20 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 	}
 
 	// --- Step 10: Direct tunnel DNS test (bypass everything, query remote DNS through tunnel) ---
-	if tunnelConnected && matchingRule.DNSServer != "" {
-		directIP, directErr := app.tunnelManager.ResolveViaTunnel(matchingRule.ProfileID, hostname, matchingRule.DNSServer)
+	directTestDNSServer := app.tunnelManager.GetDNSServerForProfile(matchingRule.ProfileID)
+	if tunnelConnected && directTestDNSServer != "" {
+		directIP, directErr := app.tunnelManager.ResolveViaTunnel(matchingRule.ProfileID, hostname)
 		if directErr != nil {
 			diagnostics.DirectTunnelDNSOk = false
 			diagnostics.DirectTunnelDNSResult = directErr.Error()
 			diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
 				Name:   "Direct Tunnel DNS Query",
 				Status: "fail",
-				Detail: fmt.Sprintf("Direct query through tunnel to %s failed: %s", matchingRule.DNSServer, directErr.Error()),
-				Fix:    fmt.Sprintf("The remote DNS server %s is unreachable through the tunnel. Check the tunnel health and the DNS server configuration.", matchingRule.DNSServer),
+				Detail: fmt.Sprintf("Direct query through tunnel to %s failed: %s", directTestDNSServer, directErr.Error()),
+				Fix:    fmt.Sprintf("The remote DNS server %s is unreachable through the tunnel. Check the tunnel health and the DNS server configuration.", directTestDNSServer),
 			})
 			if diagnostics.RootCause == "" {
-				diagnostics.RootCause = fmt.Sprintf("Remote DNS server %s is unreachable through tunnel '%s' — the tunnel may be unhealthy or the DNS server is down", matchingRule.DNSServer, matchingRule.ProfileName)
+				diagnostics.RootCause = fmt.Sprintf("Remote DNS server %s is unreachable through tunnel '%s' — the tunnel may be unhealthy or the DNS server is down", directTestDNSServer, matchingRule.ProfileName)
 			}
 		} else {
 			diagnostics.DirectTunnelDNSOk = true
@@ -1011,7 +1016,7 @@ func (app *App) gatherDNSDiagnostics(hostname string, matchingRule *debug.DNSRul
 			diagnostics.Steps = append(diagnostics.Steps, debug.DNSDiagnosticStep{
 				Name:   "Direct Tunnel DNS Query",
 				Status: "ok",
-				Detail: fmt.Sprintf("Direct tunnel query to %s resolved '%s' → %s", matchingRule.DNSServer, hostname, directIP),
+				Detail: fmt.Sprintf("Direct tunnel query to %s resolved '%s' → %s", directTestDNSServer, hostname, directIP),
 			})
 		}
 	}

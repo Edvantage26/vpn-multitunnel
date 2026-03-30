@@ -19,27 +19,29 @@ import (
 
 // DNSProxy is a DNS proxy that routes queries based on domain rules
 type DNSProxy struct {
-	config       *config.DNSProxy
-	server       *dns.Server
-	serverV6     *dns.Server          // IPv6 server
-	connV4       net.PacketConn       // Pre-bound IPv4 UDP connection
-	connV6       net.PacketConn       // Pre-bound IPv6 UDP connection
-	dialerGetter func(profileID string) TunnelDialer
+	config          *config.DNSProxy
+	server          *dns.Server
+	serverV6        *dns.Server          // IPv6 server
+	connV4          net.PacketConn       // Pre-bound IPv4 UDP connection
+	connV6          net.PacketConn       // Pre-bound IPv6 UDP connection
+	dialerGetter    func(profileID string) TunnelDialer
+	dnsServerGetter func(profileID string) string // Resolves DNS server from WireGuard .conf
 	// Transparent proxy support
-	tunnelIPs    map[string]string    // profileID -> "127.0.x.1"
-	hostMapping  *HostMappingCache    // Shared cache for transparent proxy
+	tunnelIPs       map[string]string    // profileID -> "127.0.x.1"
+	hostMapping     *HostMappingCache    // Shared cache for transparent proxy
 	tcpProxyEnabled bool
 	// Callbacks for dynamic IP management
-	onNewIP      func(ip string, profileID string) error // Called when a new unique IP is assigned
-	mu           sync.RWMutex
+	onNewIP         func(ip string, profileID string) error // Called when a new unique IP is assigned
+	mu              sync.RWMutex
 }
 
 // NewDNSProxy creates a new DNS proxy
-func NewDNSProxy(cfg *config.DNSProxy, dialerGetter func(profileID string) TunnelDialer) (*DNSProxy, error) {
+func NewDNSProxy(cfg *config.DNSProxy, dialerGetter func(profileID string) TunnelDialer, dnsServerGetter func(profileID string) string) (*DNSProxy, error) {
 	return &DNSProxy{
-		config:       cfg,
-		dialerGetter: dialerGetter,
-		tunnelIPs:    make(map[string]string),
+		config:          cfg,
+		dialerGetter:    dialerGetter,
+		dnsServerGetter: dnsServerGetter,
+		tunnelIPs:       make(map[string]string),
 	}, nil
 }
 
@@ -243,8 +245,14 @@ func (dns_proxy *DNSProxy) handleDNS(response_writer dns.ResponseWriter, request
 		modifiedRequest := request.Copy()
 		modifiedRequest.Question[0].Name = dns.Fqdn(queryDomain)
 
-		// Query through tunnel to get the real IP
-		response, err = dns_proxy.queryThroughTunnel(modifiedRequest, rule.ProfileID, rule.DNSServer)
+		// Query through tunnel to get the real IP (DNS server resolved from .conf)
+		profileDNSServer := dns_proxy.dnsServerGetter(rule.ProfileID)
+		if profileDNSServer == "" {
+			log.Printf("DNS: no DNS server configured for profile %s, falling back", rule.ProfileID)
+			response, err = dns_proxy.queryFallback(request)
+		} else {
+			response, err = dns_proxy.queryThroughTunnel(modifiedRequest, rule.ProfileID, profileDNSServer)
+		}
 
 		// If transparent proxy is enabled and we have a tunnel IP, replace the response
 		if err == nil && tcpProxyEnabled && hasTunnelIP && hostMapping != nil {
@@ -469,22 +477,31 @@ func (dns_proxy *DNSProxy) ResolveViaTunnel(profileID, hostname, dnsServer strin
 		debug.Warn("dns", fmt.Sprintf("ResolveViaTunnel: no rule found for %s", hostname), nil)
 	}
 
+	// Use provided dnsServer, or resolve from .conf cache
+	resolvedDNSServer := dnsServer
+	if resolvedDNSServer == "" && dns_proxy.dnsServerGetter != nil {
+		resolvedDNSServer = dns_proxy.dnsServerGetter(profileID)
+	}
+	if resolvedDNSServer == "" {
+		return "", fmt.Errorf("no DNS server configured for profile %s", profileID)
+	}
+
 	// Create DNS query
 	dns_query := new(dns.Msg)
 	dns_query.SetQuestion(dns.Fqdn(queryHostname), dns.TypeA)
 	dns_query.RecursionDesired = true
 
 	// Query through tunnel
-	response, err := dns_proxy.queryThroughTunnel(dns_query, profileID, dnsServer)
+	response, err := dns_proxy.queryThroughTunnel(dns_query, profileID, resolvedDNSServer)
 	if err != nil {
 		return "", err
 	}
 
 	// Extract IP from response
-	ip := extractIPFromResponse(response)
-	if ip == "" {
+	resolvedIP := extractIPFromResponse(response)
+	if resolvedIP == "" {
 		return "", fmt.Errorf("no A record found for %s", hostname)
 	}
 
-	return ip, nil
+	return resolvedIP, nil
 }

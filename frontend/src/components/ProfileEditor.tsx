@@ -203,12 +203,9 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                     <input
                       type="text"
                       value={editedProfile.healthCheck.targetIP}
-                      onChange={(event) => setEditedProfile({
-                        ...editedProfile,
-                        healthCheck: { ...editedProfile.healthCheck, targetIP: event.target.value }
-                      })}
-                      placeholder="e.g., 10.0.0.1"
-                      className="w-full input"
+                      readOnly
+                      className="w-full input opacity-60 cursor-not-allowed"
+                      title="Resolved from WireGuard .conf Address field"
                     />
                   </div>
                   <div>
@@ -244,16 +241,13 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
                 </label>
                 <input
                   type="text"
-                  value={editedProfile.dns.server}
-                  onChange={(event) => setEditedProfile({
-                    ...editedProfile,
-                    dns: { ...editedProfile.dns, server: event.target.value }
-                  })}
-                  placeholder="e.g., 172.23.0.53"
-                  className="w-full input"
+                  value={editedProfile.dns.server || '(not configured in .conf)'}
+                  readOnly
+                  className="w-full input opacity-60 cursor-not-allowed"
+                  title="Resolved from WireGuard .conf DNS field"
                 />
                 <p className="text-xs text-dark-400 mt-1">
-                  DNS server IP inside the tunnel
+                  Resolved from WireGuard .conf file
                 </p>
               </div>
 

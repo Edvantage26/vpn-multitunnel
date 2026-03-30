@@ -3,6 +3,7 @@ package tunnel
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"vpnmultitunnel/internal/config"
@@ -11,27 +12,30 @@ import (
 
 // Manager manages all active tunnels and their proxies
 type Manager struct {
-	config       *config.AppConfig
-	tunnels      map[string]*Tunnel
-	proxyManager *proxy.Manager
-	healthChecks map[string]*HealthChecker
-	mu           sync.RWMutex
+	config              *config.AppConfig
+	tunnels             map[string]*Tunnel
+	proxyManager        *proxy.Manager
+	healthChecks        map[string]*HealthChecker
+	wireguardConfigCache map[string]*config.WireGuardConfig // profileID → parsed .conf
+	mu                  sync.RWMutex
 }
 
 // NewManager creates a new tunnel manager
 func NewManager(cfg *config.AppConfig) *Manager {
 	tunnel_manager := &Manager{
-		config:       cfg,
-		tunnels:      make(map[string]*Tunnel),
-		healthChecks: make(map[string]*HealthChecker),
+		config:              cfg,
+		tunnels:             make(map[string]*Tunnel),
+		healthChecks:        make(map[string]*HealthChecker),
+		wireguardConfigCache: make(map[string]*config.WireGuardConfig),
 	}
 
 	// Initialize proxy manager
 	tunnel_manager.proxyManager = proxy.NewManager()
 
-	// Start DNS proxy if enabled
+	// Build DNS rules from profiles and start DNS proxy if enabled
+	cfg.DNSProxy.Rules = config.BuildDNSRulesFromProfiles(cfg.Profiles)
 	if cfg.DNSProxy.Enabled {
-		tunnel_manager.proxyManager.StartDNSProxy(&cfg.DNSProxy, tunnel_manager.getTunnelForProfile)
+		tunnel_manager.proxyManager.StartDNSProxy(&cfg.DNSProxy, tunnel_manager.getTunnelForProfile, tunnel_manager.GetDNSServerForProfile)
 	}
 
 	// Start TCP proxy if enabled
@@ -76,14 +80,20 @@ func (tunnel_manager *Manager) Start(profile *config.Profile) error {
 	}
 
 	tunnel_manager.tunnels[profile.ID] = tunnel
+	tunnel_manager.wireguardConfigCache[profile.ID] = wgConfig
 	log.Printf("Tunnel started for profile: %s", profile.Name)
 
-	// Start health check if enabled
-	if profile.HealthCheck.Enabled && profile.HealthCheck.TargetIP != "" {
-		hc := NewHealthChecker(profile.ID, profile.HealthCheck.TargetIP,
+	// Start health check if enabled, using TargetIP from the WireGuard .conf Address field
+	// Read directly from cache (already under lock, can't call GetTargetIPForProfile which RLocks)
+	var healthCheckTargetIP string
+	if len(wgConfig.Interface.Address) > 0 {
+		healthCheckTargetIP = strings.Split(wgConfig.Interface.Address[0], "/")[0]
+	}
+	if profile.HealthCheck.Enabled && healthCheckTargetIP != "" {
+		healthChecker := NewHealthChecker(profile.ID, healthCheckTargetIP,
 			profile.HealthCheck.IntervalSeconds, tunnel)
-		tunnel_manager.healthChecks[profile.ID] = hc
-		hc.Start()
+		tunnel_manager.healthChecks[profile.ID] = healthChecker
+		healthChecker.Start()
 	}
 
 	return nil
@@ -114,6 +124,7 @@ func (tunnel_manager *Manager) Stop(profileID string) error {
 	}
 
 	delete(tunnel_manager.tunnels, profileID)
+	delete(tunnel_manager.wireguardConfigCache, profileID)
 	log.Printf("Tunnel stopped for profile: %s", profileID)
 
 	return nil
@@ -143,6 +154,7 @@ func (tunnel_manager *Manager) StopAll() {
 	}
 
 	tunnel_manager.tunnels = make(map[string]*Tunnel)
+	tunnel_manager.wireguardConfigCache = make(map[string]*config.WireGuardConfig)
 }
 
 // IsConnected returns whether a tunnel is running for the given profile
@@ -177,8 +189,10 @@ func (tunnel_manager *Manager) GetStats(profileID string) *TunnelStats {
 // RestartDNSProxy restarts the DNS proxy with new configuration
 func (tunnel_manager *Manager) RestartDNSProxy(dnsConfig *config.DNSProxy) {
 	tunnel_manager.proxyManager.StopDNSProxy()
+	// Rebuild rules from profiles
+	dnsConfig.Rules = config.BuildDNSRulesFromProfiles(tunnel_manager.config.Profiles)
 	if dnsConfig.Enabled {
-		tunnel_manager.proxyManager.StartDNSProxy(dnsConfig, tunnel_manager.getTunnelForProfile)
+		tunnel_manager.proxyManager.StartDNSProxy(dnsConfig, tunnel_manager.getTunnelForProfile, tunnel_manager.GetDNSServerForProfile)
 	}
 }
 
@@ -252,7 +266,67 @@ func (tunnel_manager *Manager) GetHostMappings() []*proxy.HostMapping {
 	return cache.GetAllActive()
 }
 
-// ResolveViaTunnel resolves a hostname using a specific tunnel's DNS server
-func (tunnel_manager *Manager) ResolveViaTunnel(profileID, hostname, dnsServer string) (string, error) {
+// ResolveViaTunnel resolves a hostname using the tunnel's DNS server (from .conf cache)
+func (tunnel_manager *Manager) ResolveViaTunnel(profileID, hostname string) (string, error) {
+	dnsServer := tunnel_manager.GetDNSServerForProfile(profileID)
+	if dnsServer == "" {
+		return "", fmt.Errorf("no DNS server configured for profile %s", profileID)
+	}
 	return tunnel_manager.proxyManager.ResolveViaTunnel(profileID, hostname, dnsServer)
+}
+
+// GetDNSServerForProfile returns the DNS server from the cached WireGuard .conf for a profile.
+// Falls back to parsing the .conf file if not cached (e.g., tunnel not connected).
+func (tunnel_manager *Manager) GetDNSServerForProfile(profileID string) string {
+	tunnel_manager.mu.RLock()
+	cachedConfig, hasCached := tunnel_manager.wireguardConfigCache[profileID]
+	tunnel_manager.mu.RUnlock()
+
+	if hasCached && len(cachedConfig.Interface.DNS) > 0 {
+		return cachedConfig.Interface.DNS[0]
+	}
+
+	// Fallback: parse .conf from disk
+	for _, profile := range tunnel_manager.config.Profiles {
+		if profile.ID == profileID {
+			configPath, pathErr := config.GetConfigFilePath(profile.ConfigFile)
+			if pathErr != nil {
+				return ""
+			}
+			wgConfig, parseErr := config.ParseWireGuardConfig(configPath)
+			if parseErr != nil || len(wgConfig.Interface.DNS) == 0 {
+				return ""
+			}
+			return wgConfig.Interface.DNS[0]
+		}
+	}
+	return ""
+}
+
+// GetTargetIPForProfile returns the health check target IP from the cached WireGuard .conf
+// (first Address field without CIDR notation). Falls back to parsing .conf from disk.
+func (tunnel_manager *Manager) GetTargetIPForProfile(profileID string) string {
+	tunnel_manager.mu.RLock()
+	cachedConfig, hasCached := tunnel_manager.wireguardConfigCache[profileID]
+	tunnel_manager.mu.RUnlock()
+
+	if hasCached && len(cachedConfig.Interface.Address) > 0 {
+		return strings.Split(cachedConfig.Interface.Address[0], "/")[0]
+	}
+
+	// Fallback: parse .conf from disk
+	for _, profile := range tunnel_manager.config.Profiles {
+		if profile.ID == profileID {
+			configPath, pathErr := config.GetConfigFilePath(profile.ConfigFile)
+			if pathErr != nil {
+				return ""
+			}
+			wgConfig, parseErr := config.ParseWireGuardConfig(configPath)
+			if parseErr != nil || len(wgConfig.Interface.Address) == 0 {
+				return ""
+			}
+			return strings.Split(wgConfig.Interface.Address[0], "/")[0]
+		}
+	}
+	return ""
 }
