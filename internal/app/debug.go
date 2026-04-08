@@ -162,8 +162,11 @@ func (app *App) GetVPNStatusList() []debug.VPNStatusInfo {
 		status := debug.VPNStatusInfo{
 			ProfileID:   p.ID,
 			ProfileName: p.Name,
+			VPNType:     string(p.GetVPNType()),
 			Connected:   app.tunnelManager.IsConnected(p.ID),
+			Connecting:  app.connectingProfiles[p.ID],
 			TunnelIP:    app.profileService.GetTunnelIP(p.ID),
+			LastError:   app.lastConnectErrors[p.ID],
 		}
 
 		if status.Connected {
@@ -183,6 +186,28 @@ func (app *App) GetVPNStatusList() []debug.VPNStatusInfo {
 	}
 
 	return result
+}
+
+// GetConnectErrors returns all current connection errors keyed by profile ID
+func (app *App) GetConnectErrors() map[string]string {
+	app.mu.RLock()
+	defer app.mu.RUnlock()
+	errorsCopy := make(map[string]string, len(app.lastConnectErrors))
+	for profileID, errorMessage := range app.lastConnectErrors {
+		errorsCopy[profileID] = errorMessage
+	}
+	return errorsCopy
+}
+
+// GetOpenVPNStatusMap returns OpenVPN installation info as a generic map for the debug API
+func (app *App) GetOpenVPNStatusMap() map[string]any {
+	ovpn_status := app.GetOpenVPNStatus()
+	return map[string]any{
+		"installed":    ovpn_status.Installed,
+		"version":      ovpn_status.Version,
+		"path":         ovpn_status.Path,
+		"needsUpgrade": ovpn_status.NeedsUpgrade,
+	}
 }
 
 // GetProfileNames returns a map of profile IDs to names
@@ -1108,6 +1133,30 @@ func (app *App) GetDebugErrors(limit int) []debug.ErrorEntry {
 		limit = 50
 	}
 	return debug.GetErrorCollector().GetRecent(limit)
+}
+
+// GetProfileLogs returns logs filtered by profile ID (exposed to frontend)
+func (app *App) GetProfileLogs(profileID, level string, limit int) []debug.LogEntry {
+	if limit <= 0 {
+		limit = 200
+	}
+	return debug.GetLogger().GetLogsFiltered(debug.LogLevel(level), "", profileID, limit)
+}
+
+// GetSystemLogs returns combined service.log + Windows Event Log entries (exposed to frontend)
+func (app *App) GetSystemLogs(limit int) []system.SystemLogEntry {
+	if limit <= 0 {
+		limit = 500
+	}
+	return system.GetCombinedSystemLogs(limit)
+}
+
+// GetProfileErrors returns errors filtered by profile ID (exposed to frontend)
+func (app *App) GetProfileErrors(profileID string, limit int) []debug.ErrorEntry {
+	if limit <= 0 {
+		limit = 50
+	}
+	return debug.GetErrorCollector().GetByProfile(profileID, limit)
 }
 
 // GetDebugMetrics returns metrics (exposed to frontend)

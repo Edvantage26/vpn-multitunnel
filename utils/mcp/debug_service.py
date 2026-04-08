@@ -42,7 +42,7 @@ if str(_go_bin_path) not in os.environ.get("PATH", ""):
 
 
 # Path to the VPN executable - prefer production (has service connection), fallback to dev
-VPN_APP_PROD_DIR = Path("C:/Program Files/VPNMultiTunnel/VPNMultiTunnel")
+VPN_APP_PROD_DIR = Path("C:/Program Files/Edvantage/VPN MultiTunnel")
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 VPN_APP_DEV_PATH = PROJECT_ROOT / "build" / "bin" / "VPNMultiTunnel.exe"
 VPN_APP_PATH = VPN_APP_PROD_DIR / "VPNMultiTunnel.exe" if VPN_APP_PROD_DIR.exists() else VPN_APP_DEV_PATH
@@ -153,15 +153,22 @@ def format_vpn_status(vpns: list) -> str:
     lines = ["# VPN Status", ""]
 
     for vpn in vpns:
-        status_icon = "🟢" if vpn.get('connected') else "🔴"
-        health_icon = "✅" if vpn.get('healthy') else "⚠️" if vpn.get('connected') else ""
+        is_connecting = vpn.get('connecting', False)
+        is_connected = vpn.get('connected', False)
+        status_icon = "🟡" if is_connecting else ("🟢" if is_connected else "🔴")
+        health_icon = "✅" if vpn.get('healthy') else ("⚠️" if is_connected else "")
 
-        lines.append(f"## {status_icon} {vpn.get('profileName', 'Unknown')} {health_icon}")
+        vpn_type = vpn.get('vpnType', 'wireguard')
+        type_label = f" [{vpn_type}]" if vpn_type != 'wireguard' else ""
+
+        lines.append(f"## {status_icon} {vpn.get('profileName', 'Unknown')}{type_label} {health_icon}")
         lines.append(f"- Profile ID: `{vpn.get('profileId', 'N/A')}`")
-        lines.append(f"- Connected: {'Yes' if vpn.get('connected') else 'No'}")
 
-        if vpn.get('connected'):
+        if is_connecting:
+            lines.append(f"- Status: **Connecting...**")
+        elif is_connected:
             lines.extend([
+                f"- Connected: Yes",
                 f"- Healthy: {'Yes' if vpn.get('healthy') else 'No'}",
                 f"- Endpoint: {vpn.get('endpoint', 'N/A')}",
                 f"- Tunnel IP: {vpn.get('tunnelIP', 'N/A')}",
@@ -170,6 +177,10 @@ def format_vpn_status(vpns: list) -> str:
             ])
             if vpn.get('avgLatencyMs'):
                 lines.append(f"- Avg Latency: {vpn.get('avgLatencyMs'):.1f}ms")
+        else:
+            lines.append(f"- Connected: No")
+            if vpn.get('lastError'):
+                lines.append(f"- **Last Error:** {vpn.get('lastError')}")
 
         lines.append("")
 
@@ -479,6 +490,33 @@ async def list_tools() -> list[Tool]:
                         "default": 2
                     }
                 },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_connect_errors",
+            description="Get connection errors for all VPN profiles. Shows the last error message for profiles that failed to connect. Useful for debugging OpenVPN and WatchGuard connection issues.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_openvpn_status",
+            description="Get OpenVPN installation status: version, path, and whether an upgrade is recommended.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="upgrade_openvpn",
+            description="Download and install/upgrade OpenVPN to the latest version (2.7). Requires admin privileges (UAC prompt). This may take a minute.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
                 "required": []
             }
         ),
@@ -966,6 +1004,17 @@ exit 0
             vpns = status.get("vpns", [])
             return [TextContent(type="text", text=format_vpn_status(vpns))]
 
+        elif name == "get_connect_errors":
+            errors = vpn_client.get_connect_errors()
+            if not errors:
+                return [TextContent(type="text", text="No connection errors. All profiles connected successfully or haven't been attempted.")]
+            lines = ["# Connection Errors", ""]
+            for profile_id, error_msg in errors.items():
+                lines.append(f"## `{profile_id}`")
+                lines.append(f"```\n{error_msg}\n```")
+                lines.append("")
+            return [TextContent(type="text", text="\n".join(lines))]
+
         elif name == "get_host_mappings":
             mappings = vpn_client.get_host_mappings()
             return [TextContent(type="text", text=format_host_mappings(mappings))]
@@ -1018,6 +1067,34 @@ exit 0
             if not tunnel_ips and not mappings:
                 lines.append("No loopback IPs assigned yet.")
 
+            return [TextContent(type="text", text="\n".join(lines))]
+
+        elif name == "get_openvpn_status":
+            lines = ["# OpenVPN Status", ""]
+            try:
+                result = vpn_client.get_openvpn_status()
+                lines.append(f"- **Installed:** {result.get('installed', False)}")
+                lines.append(f"- **Version:** {result.get('version', 'N/A') or 'N/A'}")
+                lines.append(f"- **Path:** `{result.get('path', 'N/A') or 'N/A'}`")
+                lines.append(f"- **Needs Upgrade:** {result.get('needsUpgrade', False)}")
+            except Exception as exc:
+                lines.append(f"❌ Error: {exc}")
+            return [TextContent(type="text", text="\n".join(lines))]
+
+        elif name == "upgrade_openvpn":
+            lines = ["# OpenVPN Upgrade", ""]
+            try:
+                result = vpn_client.upgrade_openvpn()
+                if result.get("success"):
+                    lines.append("✅ OpenVPN upgraded successfully")
+                    # Show new status
+                    new_status = vpn_client.get_openvpn_status()
+                    lines.append(f"- **Version:** {new_status.get('version', 'N/A')}")
+                    lines.append(f"- **Path:** `{new_status.get('path', 'N/A')}`")
+                else:
+                    lines.append(f"❌ Upgrade failed: {result.get('error', 'Unknown error')}")
+            except Exception as exc:
+                lines.append(f"❌ Error: {exc}")
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "vpn_connect":

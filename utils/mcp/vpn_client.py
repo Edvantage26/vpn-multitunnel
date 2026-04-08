@@ -49,7 +49,7 @@ class VPNDebugClient:
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765"):
         self.base_url = base_url.rstrip("/")
-        self.client = httpx.Client(timeout=httpx.Timeout(10.0, connect=3.0))
+        self.client = httpx.Client(timeout=httpx.Timeout(300.0, connect=5.0))
 
     def _get(self, endpoint: str, params: Optional[dict] = None) -> dict:
         """Make a GET request to the API"""
@@ -87,6 +87,10 @@ class VPNDebugClient:
         """Get status of all VPN tunnels"""
         status = self.get_status()
         return status.get("vpns", [])
+
+    def get_connect_errors(self) -> dict:
+        """Get connection errors for all profiles"""
+        return self._get("/api/connect-errors")
 
     def get_host_mappings(self) -> list[dict]:
         """Get all active host mappings"""
@@ -160,6 +164,14 @@ class VPNDebugClient:
     def get_diagnostic_report(self) -> dict:
         """Generate a complete diagnostic report"""
         return self._post("/api/diagnostic", {})
+
+    def get_openvpn_status(self) -> dict:
+        """Get OpenVPN installation status (version, path, needsUpgrade)"""
+        return self._get("/api/openvpn-status")
+
+    def upgrade_openvpn(self) -> dict:
+        """Download and install/upgrade OpenVPN to latest version"""
+        return self._post("/api/openvpn-upgrade", {})
 
     def vpn_connect(self, profile_id: str) -> dict:
         """Connect a VPN profile"""

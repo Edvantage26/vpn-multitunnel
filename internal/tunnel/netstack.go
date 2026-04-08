@@ -245,6 +245,31 @@ func (tunnel *Tunnel) UpdateStats() {
 	}
 }
 
+// GetStats returns the current tunnel statistics
+func (tunnel *Tunnel) GetStats() TunnelStats {
+	return tunnel.Stats
+}
+
+// GetDNSServer returns the DNS server from the WireGuard config
+func (tunnel *Tunnel) GetDNSServer() string {
+	if tunnel.Config != nil && len(tunnel.Config.Interface.DNS) > 0 {
+		return tunnel.Config.Interface.DNS[0]
+	}
+	return ""
+}
+
+// GetAssignedIP returns the tunnel's assigned IP (first Address without CIDR)
+func (tunnel *Tunnel) GetAssignedIP() string {
+	if tunnel.Config != nil && len(tunnel.Config.Interface.Address) > 0 {
+		addrWithCIDR := tunnel.Config.Interface.Address[0]
+		if idx := strings.Index(addrWithCIDR, "/"); idx >= 0 {
+			return addrWithCIDR[:idx]
+		}
+		return addrWithCIDR
+	}
+	return ""
+}
+
 // GetNet returns the netstack.Net for this tunnel
 func (tunnel *Tunnel) GetNet() *netstack.Net {
 	return tunnel.Net

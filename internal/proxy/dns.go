@@ -27,9 +27,9 @@ type DNSProxy struct {
 	dialerGetter    func(profileID string) TunnelDialer
 	dnsServerGetter func(profileID string) string // Resolves DNS server from WireGuard .conf
 	// Transparent proxy support
-	tunnelIPs       map[string]string    // profileID -> "127.0.x.1"
-	hostMapping     *HostMappingCache    // Shared cache for transparent proxy
-	tcpProxyEnabled bool
+	tunnelIPs            map[string]string    // profileID -> "127.0.x.1"
+	hostMapping          *HostMappingCache    // Shared cache for transparent proxy
+	tcpProxyEnabled      bool
 	// Callbacks for dynamic IP management
 	onNewIP         func(ip string, profileID string) error // Called when a new unique IP is assigned
 	mu              sync.RWMutex
@@ -184,8 +184,18 @@ func (dns_proxy *DNSProxy) handleDNS(response_writer dns.ResponseWriter, request
 		return
 	}
 
+	query_start_time := time.Now()
 	question := request.Question[0]
 	domain := strings.ToLower(strings.TrimSuffix(question.Name, "."))
+	query_type_string := dns.TypeToString[question.Qtype]
+
+	// Resolve which process made this DNS query from the UDP source port
+	source_process_name := ""
+	if remote_addr := response_writer.RemoteAddr(); remote_addr != nil {
+		if udp_addr, ok := remote_addr.(*net.UDPAddr); ok {
+			source_process_name = GetProcessResolver().ResolveUDPSourceProcess(uint16(udp_addr.Port))
+		}
+	}
 
 	// Find matching rule
 	rule := dns_proxy.findRule(domain)
@@ -214,29 +224,42 @@ func (dns_proxy *DNSProxy) handleDNS(response_writer dns.ResponseWriter, request
 			if staticIP, exists := rule.Hosts[queryDomain]; exists {
 				log.Printf("DNS: static host mapping %s -> %s (profile: %s)", domain, staticIP, rule.ProfileID)
 
+				static_tunnel_ip := ""
 				// If transparent proxy is enabled, route through it
 				if tcpProxyEnabled && hasTunnelIP && hostMapping != nil {
-					tunnelIP := hostMapping.GetOrAssignIP(domain, rule.ProfileID)
+					static_tunnel_ip = hostMapping.GetOrAssignIP(domain, rule.ProfileID)
 					mapping := &HostMapping{
 						Hostname:  domain,
 						RealIP:    staticIP,
-						TunnelIP:  tunnelIP,
+						TunnelIP:  static_tunnel_ip,
 						ProfileID: rule.ProfileID,
 					}
 					hostMapping.Set(mapping)
-					log.Printf("DNS transparent proxy (static): %s -> %s (real: %s, profile: %s)", domain, tunnelIP, staticIP, rule.ProfileID)
+					log.Printf("DNS transparent proxy (static): %s -> %s (real: %s, profile: %s)", domain, static_tunnel_ip, staticIP, rule.ProfileID)
 
 					if onNewIP != nil {
-						if err := onNewIP(tunnelIP, rule.ProfileID); err != nil {
-							log.Printf("DNS: failed to configure new IP %s: %v", tunnelIP, err)
+						if err := onNewIP(static_tunnel_ip, rule.ProfileID); err != nil {
+							log.Printf("DNS: failed to configure new IP %s: %v", static_tunnel_ip, err)
 						}
 					}
-					response = createAResponse(request, tunnelIP, question.Qtype)
+					response = createAResponse(request, static_tunnel_ip, question.Qtype)
 				} else {
 					// Return static IP directly
 					response = createAResponse(request, staticIP, question.Qtype)
 				}
 				response_writer.WriteMsg(response)
+				GetTrafficMonitor().RecordDNSQuery(DNSLogEntry{
+					Timestamp:      query_start_time,
+					Domain:         domain,
+					QueryType:      query_type_string,
+					ResolvedIP:     staticIP,
+					TunnelIP:       static_tunnel_ip,
+					ProfileID:      rule.ProfileID,
+					ResponseTimeMs: time.Since(query_start_time).Milliseconds(),
+					Success:        true,
+					ViaTunnel:      false,
+					SourceProcess:  source_process_name,
+				})
 				return
 			}
 		}
@@ -300,10 +323,47 @@ func (dns_proxy *DNSProxy) handleDNS(response_writer dns.ResponseWriter, request
 		servfail_response := new(dns.Msg)
 		servfail_response.SetRcode(request, dns.RcodeServerFailure)
 		response_writer.WriteMsg(servfail_response)
+
+		error_profile_id := ""
+		if rule != nil {
+			error_profile_id = rule.ProfileID
+		}
+		GetTrafficMonitor().RecordDNSQuery(DNSLogEntry{
+			Timestamp:      query_start_time,
+			Domain:         domain,
+			QueryType:      query_type_string,
+			ProfileID:      error_profile_id,
+			ResponseTimeMs: time.Since(query_start_time).Milliseconds(),
+			Success:        false,
+			ErrorMessage:   err.Error(),
+			ViaTunnel:      rule != nil,
+			SourceProcess:  source_process_name,
+		})
 		return
 	}
 
+	// Determine the profile and resolved IP for the successful response
+	success_profile_id := ""
+	resolved_via_tunnel := false
+	if rule != nil {
+		success_profile_id = rule.ProfileID
+		resolved_via_tunnel = true
+	}
+	success_resolved_ip := extractIPFromResponse(response)
+
 	response_writer.WriteMsg(response)
+
+	GetTrafficMonitor().RecordDNSQuery(DNSLogEntry{
+		Timestamp:      query_start_time,
+		Domain:         domain,
+		QueryType:      query_type_string,
+		ResolvedIP:     success_resolved_ip,
+		ProfileID:      success_profile_id,
+		ResponseTimeMs: time.Since(query_start_time).Milliseconds(),
+		Success:        true,
+		ViaTunnel:      resolved_via_tunnel,
+		SourceProcess:  source_process_name,
+	})
 }
 
 func (dns_proxy *DNSProxy) findRule(domain string) *config.DNSRule {

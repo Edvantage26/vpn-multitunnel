@@ -119,6 +119,18 @@ func Load() (*AppConfig, error) {
 		cfg.Settings.DNSFallbackServer = "8.8.8.8"
 	}
 
+	// Migration: ensure all profiles have a VPN type (default to WireGuard)
+	profileTypeMigrationNeeded := false
+	for idx_profile := range cfg.Profiles {
+		if cfg.Profiles[idx_profile].Type == "" {
+			cfg.Profiles[idx_profile].Type = VPNTypeWireGuard
+			profileTypeMigrationNeeded = true
+		}
+	}
+	if profileTypeMigrationNeeded {
+		Save(&cfg)
+	}
+
 	// Migration: convert Settings.AutoConnect (list of IDs) to per-profile AutoConnect flags
 	if len(cfg.Settings.AutoConnect) > 0 {
 		autoConnectSet := make(map[string]bool)

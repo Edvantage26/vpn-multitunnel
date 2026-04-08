@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -567,5 +568,58 @@ func (operations *Operations) StartDNSClient() error {
 	operations.mu.Unlock()
 
 	log.Printf("DNS Client service started")
+	return nil
+}
+
+// InstallMSI installs an MSI package silently. Runs as SYSTEM so no UAC needed.
+func (operations *Operations) InstallMSI(msi_path string, components string) error {
+	log.Printf("Installing MSI: %s (components: %s)", msi_path, components)
+
+	// Stop any running OpenVPN processes first
+	for _, process_name := range []string{"openvpn", "openvpn-gui"} {
+		kill_cmd := exec.Command("taskkill", "/F", "/IM", process_name+".exe")
+		hideWindow(kill_cmd)
+		kill_cmd.Run() // Ignore errors — process may not be running
+	}
+	time.Sleep(1 * time.Second)
+
+	// Build msiexec arguments with verbose logging for diagnostics
+	msi_log_path := msi_path + ".log"
+	msi_args := []string{"/i", msi_path, "/quiet", "/norestart", "/l*v", msi_log_path}
+	if components != "" {
+		msi_args = append(msi_args, "ADDLOCAL="+components)
+	}
+
+	install_cmd := exec.Command("msiexec", msi_args...)
+	hideWindow(install_cmd)
+	install_output, install_err := install_cmd.CombinedOutput()
+	if install_err != nil {
+		// Read MSI log for diagnostic details
+		msi_log_content, _ := os.ReadFile(msi_log_path)
+		msi_log_tail := string(msi_log_content)
+		if len(msi_log_tail) > 2000 {
+			msi_log_tail = msi_log_tail[len(msi_log_tail)-2000:]
+		}
+		log.Printf("MSI install failed: %v\nOutput: %s\nMSI Log (tail):\n%s", install_err, string(install_output), msi_log_tail)
+		return fmt.Errorf("msiexec failed: %w (output: %s)", install_err, string(install_output))
+	}
+
+	log.Printf("MSI install completed successfully")
+	return nil
+}
+
+// UninstallMSI uninstalls an MSI package by product code. Runs as SYSTEM so no UAC needed.
+func (operations *Operations) UninstallMSI(product_code string) error {
+	log.Printf("Uninstalling MSI product: %s", product_code)
+
+	uninstall_cmd := exec.Command("msiexec", "/x", product_code, "/quiet", "/norestart")
+	hideWindow(uninstall_cmd)
+	uninstall_output, uninstall_err := uninstall_cmd.CombinedOutput()
+	if uninstall_err != nil {
+		log.Printf("MSI uninstall failed: %v\nOutput: %s", uninstall_err, string(uninstall_output))
+		return fmt.Errorf("msiexec uninstall failed: %w (output: %s)", uninstall_err, string(uninstall_output))
+	}
+
+	log.Printf("MSI uninstall completed successfully")
 	return nil
 }

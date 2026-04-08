@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Profile, ProfileStatus, ActiveConnection } from '../App'
 import ServicePortSelector from './ServicePortSelector'
 import ConnectionTester, { QuickTestRequest } from './ConnectionTester'
+import Traffic from './Traffic'
+import LogsView from './LogsView'
 
 // WireGuard config display type matching Go backend
 export interface WireGuardConfigDisplay {
@@ -18,32 +20,51 @@ export interface WireGuardConfigDisplay {
   }
 }
 
+type DetailTab = 'config' | 'traffic' | 'logs'
+
 interface TunnelDetailPanelProps {
   profile: Profile
   status?: ProfileStatus
+  profiles: { id: string; name: string }[]
   onConnect: () => void
   onDisconnect: () => void
   onDelete: () => void
   onEditConfig: () => void
   onRefresh: () => void
   onUpdateProfile: (profile: Profile) => void
+  onUpgradeOpenVPN?: () => void
 }
 
 function TunnelDetailPanel({
   profile,
   status,
+  profiles,
   onConnect,
   onDisconnect,
   onDelete,
   onEditConfig,
   onRefresh,
   onUpdateProfile,
+  onUpgradeOpenVPN,
 }: TunnelDetailPanelProps) {
   const isConnected = status?.connected ?? false
+  const [detailTab, setDetailTab] = useState<DetailTab>('config')
   const [wgConfig, setWgConfig] = useState<WireGuardConfigDisplay | null>(null)
   const [detectedHosts, setDetectedHosts] = useState<ActiveConnection[]>([])
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
+  const [openvpnNeedsUpgrade, setOpenvpnNeedsUpgrade] = useState(false)
+
+  // Check if OpenVPN needs upgrade when there's a connection error
+  useEffect(() => {
+    if (profile.type === 'openvpn' && status?.lastError && !status?.connected) {
+      window.go.app.App.GetOpenVPNStatus().then((ovpnStatus: { needsUpgrade: boolean }) => {
+        setOpenvpnNeedsUpgrade(ovpnStatus.needsUpgrade)
+      }).catch(() => {})
+    } else {
+      setOpenvpnNeedsUpgrade(false)
+    }
+  }, [profile.type, status?.lastError, status?.connected])
 
   // Inline editing states
   const [editingHealth, setEditingHealth] = useState(false)
@@ -64,6 +85,20 @@ function TunnelDetailPanel({
 
   // Quick test request for ConnectionTester
   const [quickTestRequest, setQuickTestRequest] = useState<QuickTestRequest | null>(null)
+
+  // Credentials editing (OpenVPN/WatchGuard)
+  const [credUsername, setCredUsername] = useState(profile.credentials?.username || '')
+  const [credPassword, setCredPassword] = useState(profile.credentials?.password || '')
+  const [showPassword, setShowPassword] = useState(false)
+  const [credsDirty, setCredsDirty] = useState(false)
+
+  // Reset credentials when switching profiles
+  useEffect(() => {
+    setCredUsername(profile.credentials?.username || '')
+    setCredPassword(profile.credentials?.password || '')
+    setCredsDirty(false)
+    setShowPassword(false)
+  }, [profile.id])
 
   // Domain suffix inline editing
   const [newSuffixInput, setNewSuffixInput] = useState('')
@@ -326,6 +361,52 @@ function TunnelDetailPanel({
         </div>
       )}
 
+      {/* Connection Error Banner */}
+      {status?.lastError && !status?.connected && (
+        <div className="bg-red-950/40 border border-red-900/50 rounded-lg p-3">
+          <div className="flex items-start gap-2.5">
+            <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-sm font-medium text-red-300">Connection Failed</p>
+                <button
+                  onClick={() => navigator.clipboard.writeText(status.lastError || '')}
+                  className="text-red-400/60 hover:text-red-300 p-1 -m-1"
+                  title="Copy error to clipboard"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+              </div>
+              <pre className="text-xs text-red-300/80 whitespace-pre-wrap break-all font-mono leading-relaxed">{status.lastError}</pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OpenVPN Upgrade Recommendation */}
+      {openvpnNeedsUpgrade && onUpgradeOpenVPN && status?.lastError && !status?.connected && (
+        <div className="bg-amber-950/40 border border-amber-900/50 rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <p className="text-sm text-amber-300">
+              OpenVPN {status.clientVersion?.replace('OpenVPN ', '')} may cause connection issues. Upgrading to 2.7 is recommended.
+            </p>
+          </div>
+          <button
+            onClick={onUpgradeOpenVPN}
+            className="btn btn-primary text-xs px-3 py-1 flex-shrink-0"
+          >
+            Upgrade
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="card p-4">
         <div className="flex items-center justify-between">
@@ -358,8 +439,11 @@ function TunnelDetailPanel({
               )}
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-sm text-dark-400">
-                  Status: <span className={isConnected ? 'text-green-400' : 'text-dark-400'}>{isConnected ? 'Active' : 'Inactive'}</span>
+                  Status: <span className={isConnected ? 'text-green-400' : 'text-dark-400'}>{isConnected ? 'Connected' : 'Disconnected'}</span>
                 </p>
+                {status?.clientVersion && (
+                  <p className="text-sm text-dark-500">{status.clientVersion}</p>
+                )}
                 <label className="flex items-center gap-1.5 text-sm text-dark-400 cursor-pointer" title="Auto-connect on startup">
                   <input
                     type="checkbox"
@@ -385,9 +469,9 @@ function TunnelDetailPanel({
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    Deactivating...
+                    Disconnecting...
                   </span>
-                ) : 'Deactivate'}
+                ) : 'Disconnect'}
               </button>
             ) : (
               <button
@@ -401,14 +485,16 @@ function TunnelDetailPanel({
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    Activating...
+                    Connecting...
                   </span>
-                ) : 'Activate'}
+                ) : 'Connect'}
               </button>
             )}
-            <button onClick={onEditConfig} className="btn btn-secondary" title="Edit WireGuard config file">
-              Config
-            </button>
+            {(profile.type === 'wireguard' || profile.type === 'openvpn') && (
+              <button onClick={onEditConfig} className="btn btn-secondary" title="Edit config file">
+                Config
+              </button>
+            )}
             <button
               onClick={onDelete}
               className="btn btn-secondary text-red-400 hover:text-red-300 px-3"
@@ -422,6 +508,40 @@ function TunnelDetailPanel({
           </div>
         </div>
       </div>
+
+      {/* Detail Tabs */}
+      <div className="flex gap-1 border-b border-dark-700">
+        {(['config', 'traffic', 'logs'] as DetailTab[]).map(tabId => (
+          <button
+            key={tabId}
+            onClick={() => setDetailTab(tabId)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize ${
+              detailTab === tabId
+                ? 'border-primary-500 text-primary-400'
+                : 'border-transparent text-dark-400 hover:text-dark-200'
+            }`}
+          >
+            {tabId}
+          </button>
+        ))}
+      </div>
+
+      {/* Traffic Tab */}
+      {detailTab === 'traffic' && (
+        <div className="h-[calc(100vh-280px)]">
+          <Traffic profiles={profiles} fixedProfileId={profile.id} hideHeader />
+        </div>
+      )}
+
+      {/* Logs Tab */}
+      {detailTab === 'logs' && (
+        <div className="h-[calc(100vh-280px)]">
+          <LogsView profiles={profiles} fixedProfileId={profile.id} hideHeader />
+        </div>
+      )}
+
+      {/* Config Tab */}
+      {detailTab === 'config' && <>
 
       {/* Domain Suffix */}
       <div className="card p-4">
@@ -682,8 +802,8 @@ function TunnelDetailPanel({
         quickTestRequest={quickTestRequest}
       />
 
-      {/* Interface Section */}
-      <div className="card p-4">
+      {/* Interface Section - WireGuard only */}
+      {profile.type === 'wireguard' && <div className="card p-4">
         <h3 className="text-sm font-semibold text-dark-300 uppercase tracking-wider mb-3 flex items-center gap-2">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
@@ -708,8 +828,10 @@ function TunnelDetailPanel({
         </div>
       </div>
 
-      {/* Peer Section */}
-      <div className="card p-4">
+}
+
+      {/* Peer Section - WireGuard only */}
+      {profile.type === 'wireguard' && <div className="card p-4">
         <h3 className="text-sm font-semibold text-dark-300 uppercase tracking-wider mb-3 flex items-center gap-2">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -746,7 +868,7 @@ function TunnelDetailPanel({
             </>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Health Check - Inline Editable */}
       <div className="card p-4">
@@ -815,6 +937,78 @@ function TunnelDetailPanel({
         )}
       </div>
 
+      {/* Credentials (OpenVPN / WatchGuard) */}
+      {profile.type === 'openvpn' && (
+        <div className="card p-4">
+          <h3 className="text-sm font-semibold text-dark-300 uppercase tracking-wider flex items-center gap-2 mb-3">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+            Credentials
+          </h3>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-dark-400 w-20">Username:</span>
+              <input
+                type="text"
+                value={credUsername}
+                onChange={(event) => { setCredUsername(event.target.value); setCredsDirty(true) }}
+                className="flex-1 input py-1 text-sm"
+                placeholder="VPN username"
+              />
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-dark-400 w-20">Password:</span>
+              <div className="flex-1 relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={credPassword}
+                  onChange={(event) => { setCredPassword(event.target.value); setCredsDirty(true) }}
+                  className="w-full input py-1 text-sm pr-9"
+                  placeholder="VPN password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-dark-400 hover:text-dark-200"
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+            {credsDirty && (
+              <div className="flex justify-end mt-2">
+                <button
+                  onClick={async () => {
+                    const updatedProfile = {
+                      ...profile,
+                      credentials: { username: credUsername, password: credPassword }
+                    }
+                    await window.go.app.App.UpdateProfile(updatedProfile)
+                    onUpdateProfile(updatedProfile)
+                    setCredsDirty(false)
+                  }}
+                  className="btn btn-primary text-xs py-1 px-3"
+                >
+                  Save Credentials
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      </>}
 
     </div>
   )

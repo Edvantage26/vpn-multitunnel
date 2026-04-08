@@ -31,6 +31,10 @@ const (
 	OpStopDNSClient  Operation = "stop_dns_client"
 	OpStartDNSClient Operation = "start_dns_client"
 
+	// MSI installation (for OpenVPN upgrade)
+	OpInstallMSI   Operation = "install_msi"
+	OpUninstallMSI Operation = "uninstall_msi"
+
 	// Health check
 	OpPing Operation = "ping"
 )

@@ -2,8 +2,12 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"runtime/debug"
+	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -19,6 +23,16 @@ import (
 var assets embed.FS
 
 func main() {
+	// Set up crash log: capture panics to a file so we can diagnose crashes
+	setupCrashLog()
+	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			crashMessage := fmt.Sprintf("FATAL PANIC at %s: %v\n\nStack trace:\n%s",
+				time.Now().Format(time.RFC3339), panicValue, debug.Stack())
+			log.Printf(crashMessage)
+			writeCrashLog(crashMessage)
+		}
+	}()
 	// Enforce single instance: if another instance is running, request graceful
 	// shutdown so it cleans up its tray icon, then take over the mutex.
 	singleInstance, singleInstanceErr := system.NewSingleInstance()
@@ -85,4 +99,37 @@ func main() {
 	if err != nil {
 		log.Fatal("Error:", err)
 	}
+}
+
+// setupCrashLog configures logging to also write to a crash log file
+func setupCrashLog() {
+	crashLogPath := getCrashLogPath()
+	crashLogFile, fileErr := os.OpenFile(crashLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if fileErr != nil {
+		return // Can't create crash log, continue without it
+	}
+	// Write startup marker
+	fmt.Fprintf(crashLogFile, "\n=== App started at %s ===\n", time.Now().Format(time.RFC3339))
+	crashLogFile.Close()
+}
+
+// writeCrashLog writes a crash message to the crash log file
+func writeCrashLog(crashMessage string) {
+	crashLogPath := getCrashLogPath()
+	crashLogFile, fileErr := os.OpenFile(crashLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if fileErr != nil {
+		return
+	}
+	defer crashLogFile.Close()
+	fmt.Fprintf(crashLogFile, "%s\n", crashMessage)
+}
+
+// getCrashLogPath returns the path to the crash log file in the data directory
+func getCrashLogPath() string {
+	dataDir, dataDirErr := config.GetDataDir()
+	if dataDirErr != nil {
+		// Fallback to temp directory
+		return filepath.Join(os.TempDir(), "vpnmultitunnel-crash.log")
+	}
+	return filepath.Join(dataDir, "crash.log")
 }

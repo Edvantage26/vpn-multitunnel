@@ -2,6 +2,16 @@ package config
 
 import "strings"
 
+// VPNType identifies the VPN protocol for a profile
+type VPNType string
+
+const (
+	VPNTypeWireGuard  VPNType = "wireguard"
+	VPNTypeOpenVPN    VPNType = "openvpn"
+	VPNTypeWatchGuard VPNType = "watchguard"
+	VPNTypeExternal   VPNType = "external"
+)
+
 // AppConfig is the root configuration structure
 type AppConfig struct {
 	Version  int       `json:"version"`
@@ -31,18 +41,36 @@ type Settings struct {
 	LogBufferSize   int  `json:"logBufferSize"`   // Size of log ring buffer (default: 10000)
 	ErrorBufferSize int  `json:"errorBufferSize"` // Size of error ring buffer (default: 1000)
 	MetricsEnabled  bool `json:"metricsEnabled"`  // Enable metrics collection
+	AdvancedMode    bool `json:"advancedMode"`    // Show global Traffic and Logs views in nav bar
 }
 
-// Profile represents a WireGuard VPN profile
+// Profile represents a VPN profile (WireGuard, OpenVPN, or WatchGuard SSL)
 type Profile struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	ConfigFile  string        `json:"configFile"`
-	Enabled     bool          `json:"enabled"`
-	AutoConnect *bool         `json:"autoConnect,omitempty"` // nil = true (default)
-	HealthCheck HealthCheck   `json:"healthCheck"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Type          VPNType       `json:"type"`                    // "wireguard", "openvpn", "watchguard" (default: "wireguard")
+	ConfigFile    string        `json:"configFile"`
+	Enabled       bool          `json:"enabled"`
+	AutoConnect   *bool         `json:"autoConnect,omitempty"`   // nil = true (default)
+	HealthCheck   HealthCheck   `json:"healthCheck"`
 	DNS           ProfileDNS    `json:"dns,omitempty"`
 	TCPProxyPorts []int         `json:"tcpProxyPorts,omitempty"` // TCP proxy ports for this profile (empty = no ports proxied)
+	// Credentials for VPN types that require authentication (OpenVPN auth-user-pass, WatchGuard)
+	Credentials   *VPNCredentialConfig `json:"credentials,omitempty"`
+}
+
+// VPNCredentialConfig stores saved VPN credentials
+type VPNCredentialConfig struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// GetVPNType returns the profile's VPN type, defaulting to WireGuard for backward compatibility
+func (profile *Profile) GetVPNType() VPNType {
+	if profile.Type == "" {
+		return VPNTypeWireGuard
+	}
+	return profile.Type
 }
 
 // ShouldAutoConnect returns whether this profile should auto-connect on startup (default: true)

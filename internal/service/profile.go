@@ -112,39 +112,28 @@ func (profile_service *ProfileService) GetConfigFilePath(id string) string {
 	return ""
 }
 
-// Import imports a WireGuard configuration file
+// Import imports a VPN configuration file (.conf for WireGuard, .ovpn for OpenVPN)
 func (profile_service *ProfileService) Import(filePath string) (*config.Profile, error) {
-	// Parse the config
-	wgConfig, err := config.ParseWireGuardConfig(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
+	fileExtension := strings.ToLower(filepath.Ext(filePath))
+
+	var profile *config.Profile
+	var parseErr error
+
+	switch fileExtension {
+	case ".conf":
+		profile, parseErr = profile_service.importWireGuardConfig(filePath)
+	case ".ovpn":
+		profile, parseErr = profile_service.importOpenVPNConfig(filePath)
+	default:
+		return nil, fmt.Errorf("unsupported config file type: %s (expected .conf or .ovpn)", fileExtension)
 	}
 
-	// Copy config file to config directory
-	configDir, err := config.GetConfigDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get config directory: %w", err)
+	if parseErr != nil {
+		return nil, parseErr
 	}
-
-	filename := filepath.Base(filePath)
-	destPath := filepath.Join(configDir, filename)
-
-	// Read source file
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	// Write to destination
-	if err := os.WriteFile(destPath, data, 0600); err != nil {
-		return nil, fmt.Errorf("failed to copy config file: %w", err)
-	}
-
-	// Create profile
-	profile := config.ProfileFromWireGuardConfig(wgConfig, filePath)
 
 	// Assign tunnel IP for transparent proxy
-	tunnelIP := profile_service.assignTunnelIP(profile.ID)
+	tunnelIP := profile_service.AssignTunnelIP(profile.ID)
 	if tunnelIP != "" {
 		if profile_service.config.TCPProxy.TunnelIPs == nil {
 			profile_service.config.TCPProxy.TunnelIPs = make(map[string]string)
@@ -153,13 +142,72 @@ func (profile_service *ProfileService) Import(filePath string) (*config.Profile,
 	}
 
 	// Add to config
-	if err := profile_service.Create(*profile); err != nil {
+	if createErr := profile_service.Create(*profile); createErr != nil {
 		// Cleanup copied file on error
-		os.Remove(destPath)
-		return nil, err
+		configPath, _ := config.GetConfigFilePath(profile.ConfigFile)
+		if configPath != "" {
+			os.Remove(configPath)
+		}
+		return nil, createErr
 	}
 
 	return profile, nil
+}
+
+// importWireGuardConfig parses and copies a WireGuard .conf file, returning the new profile
+func (profile_service *ProfileService) importWireGuardConfig(filePath string) (*config.Profile, error) {
+	wgConfig, parseErr := config.ParseWireGuardConfig(filePath)
+	if parseErr != nil {
+		return nil, fmt.Errorf("failed to parse WireGuard config: %w", parseErr)
+	}
+
+	destFilename, copyErr := profile_service.copyConfigToDisk(filePath)
+	if copyErr != nil {
+		return nil, copyErr
+	}
+
+	profile := config.ProfileFromWireGuardConfig(wgConfig, filePath)
+	profile.ConfigFile = destFilename
+	return profile, nil
+}
+
+// importOpenVPNConfig parses and copies an OpenVPN .ovpn file, returning the new profile
+func (profile_service *ProfileService) importOpenVPNConfig(filePath string) (*config.Profile, error) {
+	ovpnConfig, parseErr := config.ParseOpenVPNConfig(filePath)
+	if parseErr != nil {
+		return nil, fmt.Errorf("failed to parse OpenVPN config: %w", parseErr)
+	}
+
+	destFilename, copyErr := profile_service.copyConfigToDisk(filePath)
+	if copyErr != nil {
+		return nil, copyErr
+	}
+
+	profile := config.ProfileFromOpenVPNConfig(ovpnConfig, filePath)
+	profile.ConfigFile = destFilename
+	return profile, nil
+}
+
+// copyConfigToDisk copies a config file to the configs directory
+func (profile_service *ProfileService) copyConfigToDisk(sourcePath string) (string, error) {
+	configDir, dirErr := config.GetConfigDir()
+	if dirErr != nil {
+		return "", fmt.Errorf("failed to get config directory: %w", dirErr)
+	}
+
+	filename := filepath.Base(sourcePath)
+	destPath := filepath.Join(configDir, filename)
+
+	fileData, readErr := os.ReadFile(sourcePath)
+	if readErr != nil {
+		return "", fmt.Errorf("failed to read config file: %w", readErr)
+	}
+
+	if writeErr := os.WriteFile(destPath, fileData, 0600); writeErr != nil {
+		return "", fmt.Errorf("failed to copy config file: %w", writeErr)
+	}
+
+	return filename, nil
 }
 
 // ImportFromText creates a new profile from raw WireGuard config text and a name
@@ -229,7 +277,7 @@ func (profile_service *ProfileService) ImportFromText(config_name string, config
 	profile.Name = strings.TrimSpace(config_name)
 
 	// Assign tunnel IP for transparent proxy
-	tunnel_ip := profile_service.assignTunnelIP(profile.ID)
+	tunnel_ip := profile_service.AssignTunnelIP(profile.ID)
 	if tunnel_ip != "" {
 		if profile_service.config.TCPProxy.TunnelIPs == nil {
 			profile_service.config.TCPProxy.TunnelIPs = make(map[string]string)
@@ -246,8 +294,92 @@ func (profile_service *ProfileService) ImportFromText(config_name string, config
 	return profile, nil
 }
 
-// assignTunnelIP assigns a unique tunnel IP for the transparent proxy
-func (profile_service *ProfileService) assignTunnelIP(profileID string) string {
+// ImportOpenVPNFromText creates a new profile from raw OpenVPN config text and a name
+func (profile_service *ProfileService) ImportOpenVPNFromText(config_name string, config_content string) (*config.Profile, error) {
+	// Write content to a temp file for parsing
+	temp_file, temp_error := os.CreateTemp("", "ovpn-import-*.ovpn")
+	if temp_error != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", temp_error)
+	}
+	defer os.Remove(temp_file.Name())
+
+	if _, write_error := temp_file.WriteString(config_content); write_error != nil {
+		temp_file.Close()
+		return nil, fmt.Errorf("failed to write temp file: %w", write_error)
+	}
+	temp_file.Close()
+
+	// Parse and validate the config
+	ovpn_config, parse_error := config.ParseOpenVPNConfig(temp_file.Name())
+	if parse_error != nil {
+		return nil, fmt.Errorf("invalid OpenVPN config: %w", parse_error)
+	}
+
+	// Sanitize filename from the provided name
+	safe_filename := strings.ToLower(strings.TrimSpace(config_name))
+	safe_filename = strings.Map(func(char_value rune) rune {
+		if (char_value >= 'a' && char_value <= 'z') || (char_value >= '0' && char_value <= '9') || char_value == '-' || char_value == '_' {
+			return char_value
+		}
+		if char_value == ' ' {
+			return '-'
+		}
+		return -1
+	}, safe_filename)
+	if safe_filename == "" {
+		safe_filename = "openvpn"
+	}
+	ovpn_filename := safe_filename + ".ovpn"
+
+	// Save config file to configs directory
+	config_dir, dir_error := config.GetConfigDir()
+	if dir_error != nil {
+		return nil, fmt.Errorf("failed to get config directory: %w", dir_error)
+	}
+
+	dest_path := filepath.Join(config_dir, ovpn_filename)
+
+	// Avoid overwriting existing files by appending a number
+	if _, stat_error := os.Stat(dest_path); stat_error == nil {
+		for file_counter := 2; file_counter <= 100; file_counter++ {
+			candidate_filename := safe_filename + "-" + strconv.Itoa(file_counter) + ".ovpn"
+			candidate_path := filepath.Join(config_dir, candidate_filename)
+			if _, stat_error := os.Stat(candidate_path); os.IsNotExist(stat_error) {
+				ovpn_filename = candidate_filename
+				dest_path = candidate_path
+				break
+			}
+		}
+	}
+
+	if write_error := os.WriteFile(dest_path, []byte(config_content), 0600); write_error != nil {
+		return nil, fmt.Errorf("failed to save config file: %w", write_error)
+	}
+
+	// Create profile
+	profile := config.ProfileFromOpenVPNConfig(ovpn_config, dest_path)
+	profile.Name = strings.TrimSpace(config_name)
+
+	// Assign tunnel IP for transparent proxy
+	tunnel_ip := profile_service.AssignTunnelIP(profile.ID)
+	if tunnel_ip != "" {
+		if profile_service.config.TCPProxy.TunnelIPs == nil {
+			profile_service.config.TCPProxy.TunnelIPs = make(map[string]string)
+		}
+		profile_service.config.TCPProxy.TunnelIPs[profile.ID] = tunnel_ip
+	}
+
+	// Add to config
+	if create_error := profile_service.Create(*profile); create_error != nil {
+		os.Remove(dest_path)
+		return nil, create_error
+	}
+
+	return profile, nil
+}
+
+// AssignTunnelIP assigns a unique tunnel IP for the transparent proxy
+func (profile_service *ProfileService) AssignTunnelIP(profileID string) string {
 	// Ensure TunnelIPs map exists
 	if profile_service.config.TCPProxy.TunnelIPs == nil {
 		profile_service.config.TCPProxy.TunnelIPs = make(map[string]string)

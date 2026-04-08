@@ -97,6 +97,30 @@ func (network_config *NetworkConfig) IsServiceConnected() bool {
 	return network_config.useService && network_config.serviceClient != nil
 }
 
+// InstallMSI installs an MSI package via the Windows service (runs as SYSTEM, no UAC)
+func (network_config *NetworkConfig) InstallMSI(msiPath string, components string) error {
+	network_config.mu.Lock()
+	service_client := network_config.serviceClient
+	network_config.mu.Unlock()
+
+	if service_client == nil {
+		return fmt.Errorf("service not connected")
+	}
+	return service_client.InstallMSI(msiPath, components)
+}
+
+// UninstallMSI uninstalls an MSI package via the Windows service (runs as SYSTEM, no UAC)
+func (network_config *NetworkConfig) UninstallMSI(productCode string) error {
+	network_config.mu.Lock()
+	service_client := network_config.serviceClient
+	network_config.mu.Unlock()
+
+	if service_client == nil {
+		return fmt.Errorf("service not connected")
+	}
+	return service_client.UninstallMSI(productCode)
+}
+
 // SetUseService sets whether to use the service for privileged operations
 func (network_config *NetworkConfig) SetUseService(use bool) {
 	network_config.mu.Lock()
@@ -486,6 +510,20 @@ func (network_config *NetworkConfig) SetDNS(interfaceName string, dnsServers []s
 		return fmt.Errorf("failed to set DNS: %v - %s", err, string(output))
 	}
 	return nil
+}
+
+// SaveOriginalDNS saves the current DNS servers for an interface so they can be restored later
+func (network_config *NetworkConfig) SaveOriginalDNS(interfaceName string, dnsServers []string) {
+	network_config.mu.Lock()
+	defer network_config.mu.Unlock()
+	if _, already_saved := network_config.originalDNS[interfaceName]; !already_saved {
+		network_config.originalDNS[interfaceName] = dnsServers
+	}
+}
+
+// SetDNSForInterface sets the DNS server for a specific interface to the proxy address
+func (network_config *NetworkConfig) SetDNSForInterface(interfaceName string, dnsProxyAddress string) error {
+	return network_config.SetDNS(interfaceName, []string{dnsProxyAddress})
 }
 
 // SetDNSv6 sets the IPv6 DNS servers for an interface

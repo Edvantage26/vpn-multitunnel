@@ -132,6 +132,27 @@ func (service_handler *ServiceHandler) handleRequest(req *ipc.Request) *ipc.Resp
 		}
 		return ipc.SuccessResponse()
 
+	case ipc.OpInstallMSI:
+		msi_path, msi_path_err := req.GetString("msiPath")
+		if msi_path_err != nil {
+			return ipc.ErrorResponse(msi_path_err)
+		}
+		components, _ := req.GetString("components")
+		if install_err := service_handler.ops.InstallMSI(msi_path, components); install_err != nil {
+			return ipc.ErrorResponse(install_err)
+		}
+		return ipc.SuccessResponse()
+
+	case ipc.OpUninstallMSI:
+		product_code, product_code_err := req.GetString("productCode")
+		if product_code_err != nil {
+			return ipc.ErrorResponse(product_code_err)
+		}
+		if uninstall_err := service_handler.ops.UninstallMSI(product_code); uninstall_err != nil {
+			return ipc.ErrorResponse(uninstall_err)
+		}
+		return ipc.SuccessResponse()
+
 	default:
 		return ipc.ErrorResponse(nil).SetData("error", "unknown operation")
 	}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Profile } from '../App'
+import type { Profile, AdapterSummary } from '../App'
 import { searchServices, getServiceByPort, formatPortLabel } from '../data/servicePortRegistry'
 import ServicePortSelector from './ServicePortSelector'
 
@@ -68,6 +68,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
   const [current_step, setCurrentStep] = useState<WizardStep>(1)
 
   // Step 1 state
+  const [selected_vpn_type, setSelectedVpnType] = useState<'wireguard' | 'openvpn' | 'external'>('wireguard')
   const [import_mode, setImportMode] = useState<'file' | 'text'>('file')
   const [imported_profile, setImportedProfile] = useState<Profile | null>(null)
   const [profile_display_name, setProfileDisplayName] = useState('')
@@ -75,6 +76,12 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
   const [import_error, setImportError] = useState('')
   const [manual_config_text, setManualConfigText] = useState('')
   const [manual_config_name, setManualConfigName] = useState('')
+  // External VPN-specific state
+  const [external_adapter_name, setExternalAdapterName] = useState('')
+  const [external_auto_detect, setExternalAutoDetect] = useState(false)
+  const [external_dns_server, setExternalDnsServer] = useState('')
+  const [detected_adapters, setDetectedAdapters] = useState<AdapterSummary[]>([])
+  const [adapters_loading, setAdaptersLoading] = useState(false)
 
   // Step 2 state
   const [dns_suffix_input, setDnsSuffixInput] = useState('')
@@ -97,6 +104,20 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
 
   const has_dns_server = imported_profile?.dns?.server ? true : false
 
+  // Load network adapters when external VPN type is selected
+  useEffect(() => {
+    if (selected_vpn_type === 'external' && !imported_profile) {
+      setAdaptersLoading(true)
+      window.go.app.App.GetNetworkAdapters().then((adapters) => {
+        setDetectedAdapters(adapters || [])
+      }).catch(() => {
+        setDetectedAdapters([])
+      }).finally(() => {
+        setAdaptersLoading(false)
+      })
+    }
+  }, [selected_vpn_type, imported_profile])
+
   // Auto-connect when entering step 3
   useEffect(() => {
     if (current_step === 3 && imported_profile && !is_connected && !is_connecting && !connection_error) {
@@ -108,7 +129,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     setIsImporting(true)
     setImportError('')
     try {
-      const profile = await window.go.app.App.ImportConfig()
+      const profile = await window.go.app.App.ImportConfigByType(selected_vpn_type)
       setImportedProfile(profile)
       setProfileDisplayName(profile.name)
     } catch (err) {
@@ -125,7 +146,27 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     setIsImporting(true)
     setImportError('')
     try {
-      const profile = await window.go.app.App.CreateConfigFromText(manual_config_name.trim(), manual_config_text.trim())
+      const profile = await window.go.app.App.CreateConfigFromTextWithType(
+        manual_config_name.trim(), manual_config_text.trim(), selected_vpn_type
+      )
+      setImportedProfile(profile)
+      setProfileDisplayName(profile.name)
+    } catch (err) {
+      setImportError(String(err))
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  const handleCreateExternal = async () => {
+    if (!manual_config_name.trim()) return
+    if (!external_adapter_name.trim() && !external_auto_detect) return
+    setIsImporting(true)
+    setImportError('')
+    try {
+      const profile = await window.go.app.App.CreateExternalProfile(
+        manual_config_name.trim(), external_adapter_name.trim(), external_auto_detect, external_dns_server.trim()
+      )
       setImportedProfile(profile)
       setProfileDisplayName(profile.name)
     } catch (err) {
@@ -349,104 +390,210 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
         {/* Step Content */}
         {current_step === 1 && (
           <div className="space-y-4">
+            {/* VPN Type Selector */}
+            {!imported_profile && (
+              <div className="flex gap-1 bg-dark-900 rounded-lg p-1">
+                {([
+                  { value: 'wireguard' as const, label: 'WireGuard' },
+                  { value: 'openvpn' as const, label: 'OpenVPN' },
+                  { value: 'external' as const, label: 'External VPN' },
+                ]).map((vpn_option) => (
+                  <button
+                    key={vpn_option.value}
+                    onClick={() => {
+                      setSelectedVpnType(vpn_option.value)
+                      setImportError('')
+                      setManualConfigText('')
+                      setManualConfigName('')
+                    }}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      selected_vpn_type === vpn_option.value
+                        ? 'bg-primary-600 text-white'
+                        : 'text-dark-400 hover:text-dark-200 hover:bg-dark-800'
+                    }`}
+                  >
+                    {vpn_option.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="bg-dark-900 rounded-lg p-4">
-              <h3 className="text-sm font-medium text-dark-300 mb-2">WireGuard Configuration</h3>
+              <h3 className="text-sm font-medium text-dark-300 mb-2">
+                {selected_vpn_type === 'wireguard' ? 'WireGuard Configuration' :
+                 selected_vpn_type === 'openvpn' ? 'OpenVPN Configuration' :
+                 'External VPN'}
+              </h3>
 
               {!imported_profile ? (
                 <>
-                  {/* Mode toggle */}
-                  <div className="flex gap-1 mb-4 bg-dark-800 rounded-lg p-1">
-                    <button
-                      onClick={() => setImportMode('file')}
-                      className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                        import_mode === 'file'
-                          ? 'bg-dark-600 text-white'
-                          : 'text-dark-400 hover:text-dark-200'
-                      }`}
-                    >
-                      Import File
-                    </button>
-                    <button
-                      onClick={() => setImportMode('text')}
-                      className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                        import_mode === 'text'
-                          ? 'bg-dark-600 text-white'
-                          : 'text-dark-400 hover:text-dark-200'
-                      }`}
-                    >
-                      Paste Config
-                    </button>
-                  </div>
+                  {/* WireGuard / OpenVPN: file-based import */}
+                  {(selected_vpn_type === 'wireguard' || selected_vpn_type === 'openvpn') ? (
+                    <>
+                      {/* Mode toggle */}
+                      <div className="flex gap-1 mb-4 bg-dark-800 rounded-lg p-1">
+                        <button
+                          onClick={() => setImportMode('file')}
+                          className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                            import_mode === 'file'
+                              ? 'bg-dark-600 text-white'
+                              : 'text-dark-400 hover:text-dark-200'
+                          }`}
+                        >
+                          Import File
+                        </button>
+                        <button
+                          onClick={() => setImportMode('text')}
+                          className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                            import_mode === 'text'
+                              ? 'bg-dark-600 text-white'
+                              : 'text-dark-400 hover:text-dark-200'
+                          }`}
+                        >
+                          Paste Config
+                        </button>
+                      </div>
 
-                  {import_mode === 'file' ? (
-                    <div className="flex flex-col items-center py-6">
-                      <svg className="w-12 h-12 text-dark-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      <p className="text-xs text-dark-400 mb-3">
-                        Select a WireGuard .conf file to import
-                      </p>
-                      <button
-                        onClick={handleBrowseAndImport}
-                        disabled={is_importing}
-                        className="btn btn-primary"
-                      >
-                        {is_importing ? (
-                          <span className="flex items-center gap-2">
-                            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                            Importing...
-                          </span>
-                        ) : (
-                          'Browse & Import'
-                        )}
-                      </button>
-                    </div>
+                      {import_mode === 'file' ? (
+                        <div className="flex flex-col items-center py-6">
+                          <svg className="w-12 h-12 text-dark-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                          </svg>
+                          <p className="text-xs text-dark-400 mb-3">
+                            {selected_vpn_type === 'wireguard'
+                              ? 'Select a WireGuard .conf file to import'
+                              : 'Select an OpenVPN .ovpn file to import'}
+                          </p>
+                          <button
+                            onClick={handleBrowseAndImport}
+                            disabled={is_importing}
+                            className="btn btn-primary"
+                          >
+                            {is_importing ? (
+                              <span className="flex items-center gap-2">
+                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                Importing...
+                              </span>
+                            ) : (
+                              'Browse & Import'
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-sm font-medium text-dark-300 mb-1">
+                              Connection Name <span className="text-red-400">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={manual_config_name}
+                              onChange={(event) => setManualConfigName(event.target.value)}
+                              className="w-full input"
+                              placeholder="e.g., Office VPN"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-dark-300 mb-1">
+                              Configuration <span className="text-red-400">*</span>
+                            </label>
+                            <textarea
+                              value={manual_config_text}
+                              onChange={(event) => setManualConfigText(event.target.value)}
+                              className="w-full h-48 p-2 bg-dark-800 border border-dark-600 rounded-lg text-xs font-mono text-dark-100 focus:outline-none focus:border-primary-500 resize-y"
+                              placeholder={selected_vpn_type === 'wireguard'
+                                ? `[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/24\nDNS = 10.0.0.53\n\n[Peer]\nPublicKey = ...\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn.example.com:51820`
+                                : `client\ndev tun\nproto udp\nremote vpn.example.com 1194\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nca ca.crt\ncert client.crt\nkey client.key`}
+                              spellCheck={false}
+                            />
+                          </div>
+                          <button
+                            onClick={handleCreateFromText}
+                            disabled={is_importing || !manual_config_name.trim() || !manual_config_text.trim()}
+                            className="btn btn-primary w-full"
+                          >
+                            {is_importing ? (
+                              <span className="flex items-center justify-center gap-2">
+                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                Validating...
+                              </span>
+                            ) : (
+                              'Create Configuration'
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </>
                   ) : (
+                    /* External VPN: adapter monitoring */
                     <div className="space-y-3">
                       <div>
                         <label className="block text-sm font-medium text-dark-300 mb-1">
                           Connection Name <span className="text-red-400">*</span>
                         </label>
-                        <input
-                          type="text"
-                          value={manual_config_name}
-                          onChange={(event) => setManualConfigName(event.target.value)}
-                          className="w-full input"
-                          placeholder="e.g., Office VPN"
-                        />
+                        <input type="text" value={manual_config_name} onChange={(event) => setManualConfigName(event.target.value)}
+                          className="w-full input" placeholder="e.g., Company VPN" />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-dark-300 mb-1">
-                          Configuration <span className="text-red-400">*</span>
-                        </label>
-                        <textarea
-                          value={manual_config_text}
-                          onChange={(event) => setManualConfigText(event.target.value)}
-                          className="w-full h-48 p-2 bg-dark-800 border border-dark-600 rounded-lg text-xs font-mono text-dark-100 focus:outline-none focus:border-primary-500 resize-y"
-                          placeholder={`[Interface]\nPrivateKey = ...\nAddress = 10.0.0.2/24\nDNS = 10.0.0.53\n\n[Peer]\nPublicKey = ...\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn.example.com:51820`}
-                          spellCheck={false}
-                        />
+                        <label className="block text-sm font-medium text-dark-300 mb-1">Network Adapter</label>
+                        {adapters_loading ? (
+                          <div className="text-xs text-dark-400 py-2">Scanning adapters...</div>
+                        ) : detected_adapters.length > 0 ? (
+                          <div className="space-y-1 max-h-40 overflow-y-auto">
+                            {detected_adapters.map((adapter) => (
+                              <button
+                                key={adapter.name}
+                                onClick={() => {
+                                  setExternalAdapterName(adapter.name)
+                                  setExternalAutoDetect(false)
+                                  if (adapter.dnsServers?.length > 0) setExternalDnsServer(adapter.dnsServers[0])
+                                  if (!manual_config_name) setManualConfigName(adapter.name)
+                                }}
+                                className={`w-full text-left px-3 py-2 rounded text-xs transition-colors flex items-center justify-between gap-2 ${
+                                  external_adapter_name === adapter.name && !external_auto_detect
+                                    ? 'bg-primary-600/20 border border-primary-500 text-white'
+                                    : 'bg-dark-700 text-dark-300 hover:bg-dark-600 border border-transparent'
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-medium truncate flex items-center gap-1.5">
+                                    {adapter.isVPN && <span className="text-primary-400 text-[10px] font-semibold uppercase">VPN</span>}
+                                    {adapter.name}
+                                  </div>
+                                  <div className="text-dark-500 truncate">{adapter.description}</div>
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  {adapter.ipv4Addrs?.length > 0 && (
+                                    <span className="text-dark-400 font-mono">{adapter.ipv4Addrs[0]}</span>
+                                  )}
+                                  <span className={`w-2 h-2 rounded-full ${adapter.isUp ? 'bg-green-400' : 'bg-dark-500'}`} />
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-dark-500 py-2">No adapters detected. Use manual entry or auto-detect below.</div>
+                        )}
                       </div>
-                      <button
-                        onClick={handleCreateFromText}
-                        disabled={is_importing || !manual_config_name.trim() || !manual_config_text.trim()}
-                        className="btn btn-primary w-full"
-                      >
+                      <button onClick={handleCreateExternal}
+                        disabled={is_importing || !manual_config_name.trim() || !external_adapter_name}
+                        className="btn btn-primary w-full">
                         {is_importing ? (
                           <span className="flex items-center justify-center gap-2">
                             <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                             </svg>
-                            Validating...
+                            Creating...
                           </span>
-                        ) : (
-                          'Create Configuration'
-                        )}
+                        ) : 'Create Connection'}
                       </button>
                     </div>
                   )}
@@ -458,23 +605,28 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
                     <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    <span className="text-sm text-dark-200">{imported_profile.configFile}</span>
+                    <span className="text-xs font-medium text-dark-400 uppercase">
+                      {selected_vpn_type === 'wireguard' ? 'WG' : selected_vpn_type === 'openvpn' ? 'OVPN' : 'EXT'}
+                    </span>
+                    <span className="text-sm text-dark-200">{imported_profile.configFile || external_adapter_name || 'auto-detect'}</span>
                     <span className="text-xs text-green-400 ml-auto">Ready</span>
                   </div>
 
-                  {/* Editable name */}
-                  <div>
-                    <label className="block text-sm font-medium text-dark-300 mb-1">
-                      Connection Name
-                    </label>
-                    <input
-                      type="text"
-                      value={profile_display_name}
-                      onChange={(event) => setProfileDisplayName(event.target.value)}
-                      className="w-full input"
-                      placeholder="Enter a name for this connection"
-                    />
-                  </div>
+                  {/* Editable name — skip for external (already entered) */}
+                  {selected_vpn_type !== 'external' && (
+                    <div>
+                      <label className="block text-sm font-medium text-dark-300 mb-1">
+                        Connection Name
+                      </label>
+                      <input
+                        type="text"
+                        value={profile_display_name}
+                        onChange={(event) => setProfileDisplayName(event.target.value)}
+                        className="w-full input"
+                        placeholder="Enter a name for this connection"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 

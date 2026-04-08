@@ -20,14 +20,27 @@ func (app *App) GetProfiles() []ProfileStatus {
 	result := make([]ProfileStatus, len(profiles))
 
 	for idx_profile, current_profile := range profiles {
+		profile_vpn_type := current_profile.GetVPNType()
+		client_version := ""
+		switch profile_vpn_type {
+		case config.VPNTypeWireGuard:
+			// Built-in library, no meaningful version to show
+		case config.VPNTypeOpenVPN, config.VPNTypeWatchGuard:
+			client_version = app.cachedOpenVPNVersion
+		case config.VPNTypeExternal:
+			client_version = "External"
+		}
+
 		status := ProfileStatus{
-			ID:         current_profile.ID,
-			Name:       current_profile.Name,
-			ConfigFile: current_profile.ConfigFile,
-			Connected:  app.tunnelManager.IsConnected(current_profile.ID),
-			Connecting: app.connectingProfiles[current_profile.ID],
-			TunnelIP:   app.profileService.GetTunnelIP(current_profile.ID),
-			LastError:  app.lastConnectErrors[current_profile.ID],
+			ID:            current_profile.ID,
+			Name:          current_profile.Name,
+			Type:          string(profile_vpn_type),
+			ConfigFile:    current_profile.ConfigFile,
+			Connected:     app.tunnelManager.IsConnected(current_profile.ID),
+			Connecting:    app.connectingProfiles[current_profile.ID],
+			TunnelIP:      app.profileService.GetTunnelIP(current_profile.ID),
+			LastError:     app.lastConnectErrors[current_profile.ID],
+			ClientVersion: client_version,
 		}
 
 		// Get stats if connected
@@ -72,7 +85,55 @@ func (app *App) Connect(id string) error {
 	return app.connectInternal(id, true)
 }
 
-// connectInternal connects a profile, optionally prompting for elevation
+// ConnectWithCredentials connects a profile by ID, providing username/password for auth.
+// Saves the credentials to the profile config for future connections.
+func (app *App) ConnectWithCredentials(id string, username string, password string) error {
+	// Save credentials to profile for future connections
+	profile, profileErr := app.profileService.GetByID(id)
+	if profileErr == nil {
+		profile.Credentials = &config.VPNCredentialConfig{
+			Username: username,
+			Password: password,
+		}
+		app.profileService.Update(*profile)
+	}
+
+	app.tunnelManager.SetCredentials(id, username, password)
+	return app.connectInternal(id, true)
+}
+
+// ProfileNeedsCredentials returns true if connecting this profile requires username/password
+// AND no credentials are saved in the profile config.
+func (app *App) ProfileNeedsCredentials(id string) bool {
+	profile, err := app.profileService.GetByID(id)
+	if err != nil {
+		return false
+	}
+	// If credentials are already saved, don't prompt
+	if profile.Credentials != nil && profile.Credentials.Username != "" {
+		return false
+	}
+	if profile.GetVPNType() == config.VPNTypeOpenVPN {
+		configPath, pathErr := config.GetConfigFilePath(profile.ConfigFile)
+		if pathErr != nil {
+			return false
+		}
+		ovpnConfig, parseErr := config.ParseOpenVPNConfig(configPath)
+		if parseErr != nil {
+			return false
+		}
+		return ovpnConfig.AuthUserPass
+	}
+	if profile.GetVPNType() == config.VPNTypeWatchGuard {
+		return true // WatchGuard always needs credentials
+	}
+	return false
+}
+
+// connectInternal connects a profile, optionally prompting for elevation.
+// For OpenVPN and WatchGuard, the connection runs in a background goroutine
+// so the UI doesn't freeze (these can take 60s+). WireGuard connects synchronously
+// since it's near-instant (userspace).
 func (app *App) connectInternal(id string, allowElevation bool) error {
 	profile, err := app.profileService.GetByID(id)
 	if err != nil {
@@ -88,23 +149,37 @@ func (app *App) connectInternal(id string, allowElevation bool) error {
 		if tunnelIP := app.profileService.GetTunnelIP(id); tunnelIP != "" {
 			if !app.networkConfig.LoopbackIPExists(tunnelIP) {
 				if allowElevation || app.networkConfig.IsServiceConnected() {
-					if err := app.networkConfig.AddLoopbackIPElevated(tunnelIP); err != nil {
-						log.Printf("Warning: Could not add loopback IP %s: %v", tunnelIP, err)
-						// Continue anyway - transparent proxy will still work
+					if loopbackErr := app.networkConfig.AddLoopbackIPElevated(tunnelIP); loopbackErr != nil {
+						log.Printf("Warning: Could not add loopback IP %s: %v", tunnelIP, loopbackErr)
 					}
-				} else {
-					log.Printf("Loopback IP %s not configured, skipping (no elevation and no service)", tunnelIP)
 				}
 			}
 		}
 	}
 
-	// Start the tunnel
-	if err := app.tunnelManager.Start(profile); err != nil {
+	// For slow VPN types (OpenVPN, WatchGuard), run connection in background
+	vpnType := profile.GetVPNType()
+	if vpnType == config.VPNTypeOpenVPN || vpnType == config.VPNTypeWatchGuard || vpnType == config.VPNTypeExternal {
 		app.mu.Lock()
-		app.lastConnectErrors[id] = err.Error()
+		app.connectingProfiles[id] = true
+		delete(app.lastConnectErrors, id)
 		app.mu.Unlock()
-		return err
+
+		go app.connectInBackground(id, profile, allowElevation)
+		return nil
+	}
+
+	// WireGuard: synchronous (near-instant)
+	return app.doConnect(id, profile, allowElevation)
+}
+
+// doConnect performs the actual tunnel start and post-connect setup.
+func (app *App) doConnect(id string, profile *config.Profile, allowElevation bool) error {
+	if startErr := app.tunnelManager.Start(profile); startErr != nil {
+		app.mu.Lock()
+		app.lastConnectErrors[id] = startErr.Error()
+		app.mu.Unlock()
+		return startErr
 	}
 
 	// Clear any previous error on successful connect
@@ -114,8 +189,6 @@ func (app *App) connectInternal(id string, allowElevation bool) error {
 
 	// Configure system DNS if not already configured and auto-configure is enabled
 	if !app.networkConfig.IsTransparentDNSConfigured() && app.config.Settings.AutoConfigureDNS && app.config.DNSProxy.Enabled {
-		// Allow DNS configure if elevation is permitted OR if the service is connected
-		// (the service handles privileged ops without UAC)
 		if allowElevation || app.networkConfig.IsServiceConnected() {
 			app.configureSystemDNS()
 		} else {
@@ -132,6 +205,42 @@ func (app *App) connectInternal(id string, allowElevation bool) error {
 	app.updateTrayStatus()
 
 	return nil
+}
+
+// connectInBackground runs the (slow) connection in a goroutine and updates state when done.
+// Uses recover to ensure a panic never crashes the entire application.
+func (app *App) connectInBackground(id string, profile *config.Profile, allowElevation bool) {
+	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			log.Printf("PANIC in connectInBackground for %s: %v", profile.Name, panicValue)
+			app.mu.Lock()
+			delete(app.connectingProfiles, id)
+			app.lastConnectErrors[id] = fmt.Sprintf("internal error (panic): %v", panicValue)
+			app.mu.Unlock()
+		}
+	}()
+
+	connectErr := app.doConnect(id, profile, allowElevation)
+
+	// Auto-retry: if OpenVPN failed because all TAP adapters are in use,
+	// create an additional TAP adapter and retry once
+	if connectErr != nil && strings.Contains(connectErr.Error(), "tap-windows") && strings.Contains(connectErr.Error(), "in use") {
+		log.Printf("[%s] TAP adapters exhausted, creating additional adapter and retrying...", profile.Name)
+		if tapErr := app.EnsureTAPAdapter(); tapErr != nil {
+			log.Printf("[%s] Failed to create TAP adapter: %v", profile.Name, tapErr)
+		} else {
+			// Retry the connection with the new adapter
+			connectErr = app.doConnect(id, profile, allowElevation)
+		}
+	}
+
+	app.mu.Lock()
+	delete(app.connectingProfiles, id)
+	if connectErr != nil {
+		app.lastConnectErrors[id] = connectErr.Error()
+		log.Printf("Background connect failed for %s: %v", profile.Name, connectErr)
+	}
+	app.mu.Unlock()
 }
 
 // Disconnect disconnects a profile by ID
@@ -232,14 +341,42 @@ func (app *App) DeleteProfile(id string, deleteConfigFile bool) error {
 	return nil
 }
 
-// ImportConfig imports a WireGuard configuration file
+// ImportConfig imports a VPN configuration file (WireGuard .conf or OpenVPN .ovpn)
 func (app *App) ImportConfig() (*config.Profile, error) {
+	return app.ImportConfigByType("")
+}
+
+// ImportConfigByType imports a VPN config file, filtering the file dialog by VPN type.
+// If vpnType is empty, shows all supported formats.
+func (app *App) ImportConfigByType(vpnType string) (*config.Profile, error) {
+	// Build file filters based on VPN type
+	var dialogTitle string
+	var fileFilters []runtime.FileFilter
+
+	switch config.VPNType(vpnType) {
+	case config.VPNTypeWireGuard:
+		dialogTitle = "Import WireGuard Configuration"
+		fileFilters = []runtime.FileFilter{
+			{DisplayName: "WireGuard Config (*.conf)", Pattern: "*.conf"},
+		}
+	case config.VPNTypeOpenVPN:
+		dialogTitle = "Import OpenVPN Configuration"
+		fileFilters = []runtime.FileFilter{
+			{DisplayName: "OpenVPN Config (*.ovpn)", Pattern: "*.ovpn"},
+		}
+	default:
+		dialogTitle = "Import VPN Configuration"
+		fileFilters = []runtime.FileFilter{
+			{DisplayName: "VPN Configs (*.conf, *.ovpn)", Pattern: "*.conf;*.ovpn"},
+			{DisplayName: "WireGuard Config", Pattern: "*.conf"},
+			{DisplayName: "OpenVPN Config", Pattern: "*.ovpn"},
+		}
+	}
+
 	// Open file dialog
 	selection, err := runtime.OpenFileDialog(app.ctx, runtime.OpenDialogOptions{
-		Title: "Import WireGuard Configuration",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "WireGuard Config", Pattern: "*.conf"},
-		},
+		Title:   dialogTitle,
+		Filters: fileFilters,
 	})
 	if err != nil {
 		return nil, err
@@ -270,8 +407,15 @@ func (app *App) ImportConfig() (*config.Profile, error) {
 	return profile, nil
 }
 
-// CreateConfigFromText creates a new profile from raw WireGuard config text
+// CreateConfigFromText creates a new profile from raw VPN config text (WireGuard format).
+// For backward compatibility, defaults to WireGuard parsing.
 func (app *App) CreateConfigFromText(config_name string, config_content string) (*config.Profile, error) {
+	return app.CreateConfigFromTextWithType(config_name, config_content, string(config.VPNTypeWireGuard))
+}
+
+// CreateConfigFromTextWithType creates a new profile from raw VPN config text.
+// vpnType should be "wireguard" or "openvpn".
+func (app *App) CreateConfigFromTextWithType(config_name string, config_content string, vpnType string) (*config.Profile, error) {
 	if strings.TrimSpace(config_name) == "" {
 		return nil, fmt.Errorf("configuration name is required")
 	}
@@ -279,7 +423,16 @@ func (app *App) CreateConfigFromText(config_name string, config_content string) 
 		return nil, fmt.Errorf("configuration content is required")
 	}
 
-	profile, import_error := app.profileService.ImportFromText(config_name, config_content)
+	var profile *config.Profile
+	var import_error error
+
+	switch config.VPNType(vpnType) {
+	case config.VPNTypeOpenVPN:
+		profile, import_error = app.profileService.ImportOpenVPNFromText(config_name, config_content)
+	default:
+		profile, import_error = app.profileService.ImportFromText(config_name, config_content)
+	}
+
 	if import_error != nil {
 		return nil, import_error
 	}
@@ -298,6 +451,181 @@ func (app *App) CreateConfigFromText(config_name string, config_content string) 
 	}
 
 	return profile, nil
+}
+
+// CreateWatchGuardProfile creates a new WatchGuard Mobile VPN with SSL profile
+func (app *App) CreateWatchGuardProfile(profileName string, serverAddress string, serverPort string, username string) (*config.Profile, error) {
+	if strings.TrimSpace(profileName) == "" {
+		return nil, fmt.Errorf("profile name is required")
+	}
+	if strings.TrimSpace(serverAddress) == "" {
+		return nil, fmt.Errorf("server address is required")
+	}
+	if serverPort == "" {
+		serverPort = "443"
+	}
+
+	// Save WatchGuard config as a .wgjson file
+	wgConfig := &config.WatchGuardConfig{
+		ServerAddress: serverAddress,
+		ServerPort:    serverPort,
+		Username:      username,
+	}
+
+	configFilename, saveErr := config.SaveWatchGuardConfig(wgConfig, profileName)
+	if saveErr != nil {
+		return nil, saveErr
+	}
+
+	// Create profile
+	profile := config.ProfileFromWatchGuardConfig(serverAddress, profileName)
+	profile.ConfigFile = configFilename
+
+	// Assign tunnel IP for transparent proxy
+	tunnelIP := app.profileService.AssignTunnelIP(profile.ID)
+	if tunnelIP != "" {
+		if app.config.TCPProxy.TunnelIPs == nil {
+			app.config.TCPProxy.TunnelIPs = make(map[string]string)
+		}
+		app.config.TCPProxy.TunnelIPs[profile.ID] = tunnelIP
+	}
+
+	// Add to config
+	if createErr := app.profileService.Create(*profile); createErr != nil {
+		return nil, createErr
+	}
+
+	// Add loopback IP for the new profile
+	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.IsEnabled() && tunnelIP != "" {
+		if system.IsAdmin() || app.networkConfig.IsServiceConnected() {
+			if loopbackErr := app.networkConfig.EnsureLoopbackIPs([]string{tunnelIP}); loopbackErr != nil {
+				log.Printf("Warning: Failed to add loopback IP %s: %v", tunnelIP, loopbackErr)
+			}
+		}
+	}
+
+	return profile, nil
+}
+
+// CreateExternalProfile creates a new External VPN profile that monitors for a network adapter
+func (app *App) CreateExternalProfile(profileName string, adapterName string, adapterAutoDetect bool, dnsServer string) (*config.Profile, error) {
+	if strings.TrimSpace(profileName) == "" {
+		return nil, fmt.Errorf("profile name is required")
+	}
+	if strings.TrimSpace(adapterName) == "" && !adapterAutoDetect {
+		return nil, fmt.Errorf("adapter name is required when auto-detect is disabled")
+	}
+
+	// Save external VPN config
+	extConfig := &config.ExternalVPNConfig{
+		AdapterName:       adapterName,
+		AdapterAutoDetect: adapterAutoDetect,
+		DNSServer:         dnsServer,
+		PollIntervalSec:   2,
+	}
+
+	configFilename, saveErr := config.SaveExternalVPNConfig(extConfig, profileName)
+	if saveErr != nil {
+		return nil, saveErr
+	}
+
+	profile := config.ProfileFromExternalVPNConfig(profileName, adapterName)
+	profile.ConfigFile = configFilename
+
+	// Assign tunnel IP
+	tunnelIP := app.profileService.AssignTunnelIP(profile.ID)
+	if tunnelIP != "" {
+		if app.config.TCPProxy.TunnelIPs == nil {
+			app.config.TCPProxy.TunnelIPs = make(map[string]string)
+		}
+		app.config.TCPProxy.TunnelIPs[profile.ID] = tunnelIP
+	}
+
+	if createErr := app.profileService.Create(*profile); createErr != nil {
+		return nil, createErr
+	}
+
+	if app.config.Settings.AutoConfigureLoopback && app.config.TCPProxy.IsEnabled() && tunnelIP != "" {
+		if system.IsAdmin() || app.networkConfig.IsServiceConnected() {
+			if loopbackErr := app.networkConfig.EnsureLoopbackIPs([]string{tunnelIP}); loopbackErr != nil {
+				log.Printf("Warning: Failed to add loopback IP %s: %v", tunnelIP, loopbackErr)
+			}
+		}
+	}
+
+	return profile, nil
+}
+
+// vpnAdapterKeywords are substrings that identify likely VPN adapters
+var vpnAdapterKeywords = []string{
+	"tap", "tun", "wireguard", "wg", "tailscale", "cisco", "anyconnect",
+	"globalprotect", "forticlient", "fortinet", "sonicwall", "watchguard",
+	"openvpn", "vpn", "ipsec", "juniper", "pulse", "f5", "zscaler",
+	"cloudflare warp", "mullvad", "nordlynx", "proton",
+}
+
+// systemAdapterKeywords are substrings that identify system/virtual adapters to deprioritize
+var systemAdapterKeywords = []string{
+	"loopback", "vethernet", "virtualbox", "vmware", "hyper-v",
+	"bluetooth", "docker", "wsl",
+}
+
+// GetNetworkAdapters returns all network adapters with VPN heuristic flags
+func (app *App) GetNetworkAdapters() []AdapterSummary {
+	adapters, fetch_err := system.GetAllAdapters()
+	if fetch_err != nil {
+		log.Printf("Failed to get network adapters: %v", fetch_err)
+		return []AdapterSummary{}
+	}
+
+	result := make([]AdapterSummary, 0, len(adapters))
+	for _, adapter := range adapters {
+		lower_name := strings.ToLower(adapter.Name)
+		lower_desc := strings.ToLower(adapter.Description)
+
+		// Check if this looks like a VPN adapter
+		is_vpn := false
+		for _, keyword := range vpnAdapterKeywords {
+			if strings.Contains(lower_name, keyword) || strings.Contains(lower_desc, keyword) {
+				is_vpn = true
+				break
+			}
+		}
+
+		// Skip system/virtual adapters unless they match VPN keywords
+		if !is_vpn {
+			is_system := false
+			for _, keyword := range systemAdapterKeywords {
+				if strings.Contains(lower_name, keyword) || strings.Contains(lower_desc, keyword) {
+					is_system = true
+					break
+				}
+			}
+			if is_system {
+				continue
+			}
+		}
+
+		result = append(result, AdapterSummary{
+			Name:        adapter.Name,
+			Description: adapter.Description,
+			IPv4Addrs:   adapter.IPv4Addrs,
+			DNSServers:  adapter.DNSServers,
+			IsUp:        adapter.IsUp(),
+			IsVPN:       is_vpn,
+		})
+	}
+
+	// Sort: VPN adapters first, then by name
+	for current_position := 0; current_position < len(result); current_position++ {
+		for compare_position := current_position + 1; compare_position < len(result); compare_position++ {
+			if !result[current_position].IsVPN && result[compare_position].IsVPN {
+				result[current_position], result[compare_position] = result[compare_position], result[current_position]
+			}
+		}
+	}
+
+	return result
 }
 
 // UpdateProfile updates a profile

@@ -70,8 +70,12 @@ func (ipc_client *Client) Send(req *Request) (*Response, error) {
 		return nil, fmt.Errorf("not connected to service")
 	}
 
-	// Set deadline for the entire operation
-	ipc_client.conn.SetDeadline(time.Now().Add(30 * time.Second))
+	// Set deadline based on operation type (MSI installs can take minutes)
+	send_timeout := 30 * time.Second
+	if req.Operation == OpInstallMSI || req.Operation == OpUninstallMSI {
+		send_timeout = 5 * time.Minute
+	}
+	ipc_client.conn.SetDeadline(time.Now().Add(send_timeout))
 	defer ipc_client.conn.SetDeadline(time.Time{})
 
 	// Encode request
@@ -272,6 +276,34 @@ func (ipc_client *Client) StartDNSClient() error {
 	}
 	if !resp.Success {
 		return fmt.Errorf("start DNS client failed: %s", resp.Error)
+	}
+	return nil
+}
+
+// InstallMSI requests the service to install an MSI package silently
+func (ipc_client *Client) InstallMSI(msiPath string, components string) error {
+	req := NewRequest(OpInstallMSI).
+		SetParam("msiPath", msiPath).
+		SetParam("components", components)
+	resp, send_err := ipc_client.Send(req)
+	if send_err != nil {
+		return send_err
+	}
+	if !resp.Success {
+		return fmt.Errorf("MSI install failed: %s", resp.Error)
+	}
+	return nil
+}
+
+// UninstallMSI requests the service to uninstall an MSI package by product code
+func (ipc_client *Client) UninstallMSI(productCode string) error {
+	req := NewRequest(OpUninstallMSI).SetParam("productCode", productCode)
+	resp, send_err := ipc_client.Send(req)
+	if send_err != nil {
+		return send_err
+	}
+	if !resp.Success {
+		return fmt.Errorf("MSI uninstall failed: %s", resp.Error)
 	}
 	return nil
 }

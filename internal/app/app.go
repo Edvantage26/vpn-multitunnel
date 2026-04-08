@@ -52,12 +52,16 @@ type App struct {
 	updateCheckerStop  chan struct{}
 	latestUpdateInfo   *UpdateInfo
 	updateInfoMu       sync.RWMutex
+
+	// Cached VPN client version strings (refreshed on startup and after install)
+	cachedOpenVPNVersion string
 }
 
 // ProfileStatus represents the status of a profile for the UI
 type ProfileStatus struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
+	Type          string `json:"type"`
 	ConfigFile    string `json:"configFile"`
 	Connected     bool   `json:"connected"`
 	Connecting    bool   `json:"connecting"`
@@ -67,8 +71,9 @@ type ProfileStatus struct {
 	BytesRecv     uint64 `json:"bytesRecv"`
 	LastHandshake string `json:"lastHandshake"`
 	Endpoint      string `json:"endpoint"`
-	LastError     string `json:"lastError,omitempty"`
-	DNSIssue      string `json:"dnsIssue,omitempty"`
+	LastError      string `json:"lastError,omitempty"`
+	DNSIssue       string `json:"dnsIssue,omitempty"`
+	ClientVersion  string `json:"clientVersion,omitempty"`
 }
 
 // WireGuardConfigDisplay represents WireGuard config metadata for UI display
@@ -84,6 +89,26 @@ type WireGuardConfigDisplay struct {
 		AllowedIPs string `json:"allowedIPs"`
 		PublicKey  string `json:"publicKey"`
 	} `json:"peer"`
+}
+
+// AdapterSummary represents a network adapter for the frontend adapter picker
+type AdapterSummary struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	IPv4Addrs   []string `json:"ipv4Addrs"`
+	DNSServers  []string `json:"dnsServers"`
+	IsUp        bool     `json:"isUp"`
+	IsVPN       bool     `json:"isVPN"`
+}
+
+// refreshOpenVPNVersionCache detects the installed OpenVPN version and caches it
+func (app *App) refreshOpenVPNVersionCache() {
+	ovpnStatus := app.GetOpenVPNStatus()
+	if ovpnStatus.Installed && ovpnStatus.Version != "" {
+		app.cachedOpenVPNVersion = "OpenVPN " + ovpnStatus.Version
+	} else {
+		app.cachedOpenVPNVersion = ""
+	}
 }
 
 // New creates a new App application struct
@@ -129,6 +154,23 @@ func (app *App) Startup(ctx context.Context) {
 	// Initialize services
 	app.profileService = service.NewProfileService(cfg)
 	app.tunnelManager = tunnel.NewManager(cfg)
+
+	// Cache OpenVPN version for display in profile status
+	app.refreshOpenVPNVersionCache()
+
+	// Register log listener for real-time log events to the frontend (all logs, including system)
+	debug.GetLogger().AddListener(func(logEntry debug.LogEntry) {
+		if app.ctx != nil {
+			runtime.EventsEmit(app.ctx, "profile-log", logEntry)
+		}
+	})
+
+	// Wire up traffic monitor events to the frontend
+	app.tunnelManager.GetTrafficMonitor().SetEventEmitter(func(event_name string, event_data interface{}) {
+		if app.ctx != nil {
+			runtime.EventsEmit(app.ctx, event_name, event_data)
+		}
+	})
 
 	// Set callback for dynamically configuring loopback IPs when DNS assigns new IPs
 	app.tunnelManager.SetLoopbackIPCallback(func(ip string) error {
@@ -218,9 +260,14 @@ func (app *App) Startup(ctx context.Context) {
 			if err := app.connectInternal(profile.ID, false); err != nil {
 				log.Printf("Auto-connect failed for %s: %v", profile.Name, err)
 			}
-			app.mu.Lock()
-			delete(app.connectingProfiles, profile.ID)
-			app.mu.Unlock()
+			// For sync VPN types (WireGuard), clear connecting state here.
+			// For async types (OpenVPN/WatchGuard), connectInBackground handles it.
+			vpnType := profile.GetVPNType()
+			if vpnType != config.VPNTypeOpenVPN && vpnType != config.VPNTypeWatchGuard && vpnType != config.VPNTypeExternal {
+				app.mu.Lock()
+				delete(app.connectingProfiles, profile.ID)
+				app.mu.Unlock()
+			}
 		}
 
 		// Update tray status after auto-connect

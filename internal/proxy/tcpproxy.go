@@ -8,9 +8,12 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"vpnmultitunnel/internal/config"
+	"vpnmultitunnel/internal/debug"
 )
 
 // TCPProxy is a transparent TCP proxy that listens on multiple IPs/ports
@@ -62,12 +65,32 @@ func NewTCPProxy(cfg *config.TCPProxy, tunnelGetter TunnelGetter, hostMapping *H
 	}
 }
 
-// getPortsForProfile returns the TCP proxy ports for a given profile
+// getPortsForProfile returns the TCP proxy ports for a given profile.
+// For the internet profile (__internet__), returns the union of all profile ports
+// so that any proxied internet traffic can be captured regardless of destination port.
 func (tcp_proxy *TCPProxy) getPortsForProfile(profileID string) []int {
 	if ports, exists := tcp_proxy.portsForProfile[profileID]; exists {
 		return ports
 	}
+	if profileID == InternetProfileID {
+		return tcp_proxy.getAllUniquePorts()
+	}
 	return nil
+}
+
+// getAllUniquePorts returns the deduplicated union of ports from all profiles
+func (tcp_proxy *TCPProxy) getAllUniquePorts() []int {
+	seen_ports := make(map[int]bool)
+	var unique_ports []int
+	for _, profile_ports := range tcp_proxy.portsForProfile {
+		for _, port_value := range profile_ports {
+			if !seen_ports[port_value] {
+				seen_ports[port_value] = true
+				unique_ports = append(unique_ports, port_value)
+			}
+		}
+	}
+	return unique_ports
 }
 
 // Start starts the TCP proxy, listening on all configured IPs and ports
@@ -146,56 +169,210 @@ func (tcp_proxy *TCPProxy) acceptLoop(listener net.Listener, profileID string, t
 	}
 }
 
+// InternetProfileID is the special profile ID used for non-tunnel internet traffic
+const InternetProfileID = "__internet__"
+
 func (tcp_proxy *TCPProxy) handleConnection(conn net.Conn, profileID string, tunnelIP string, port int) {
 	defer conn.Close()
 
-	// Get the tunnel for this profile
-	tunnel := tcp_proxy.tunnelGetter(profileID)
-	if tunnel == nil {
-		log.Printf("TCP proxy: tunnel not connected for profile %s", profileID)
-		return
-	}
+	debug.Debug("proxy", fmt.Sprintf("Connection from %s to %s:%d (profile: %s)", conn.RemoteAddr(), tunnelIP, port, profileID), map[string]any{
+		"profileId": profileID,
+		"tunnelIP":  tunnelIP,
+		"port":      port,
+	})
 
 	// Look up the host mapping to find the real destination
 	mapping := tcp_proxy.hostMapping.GetByTunnelIP(tunnelIP)
 	if mapping == nil {
-		log.Printf("TCP proxy: no host mapping found for tunnel IP %s", tunnelIP)
+		debug.Warn("proxy", fmt.Sprintf("No host mapping for tunnel IP %s — mapping may have expired (TTL 30m)", tunnelIP), map[string]any{
+			"profileId": profileID,
+			"tunnelIP":  tunnelIP,
+			"port":      port,
+		})
 		return
 	}
 
-	// Connect to the real destination through the tunnel
+	// Sniff the first bytes to detect TLS SNI or WebSocket upgrade
+	protocol_result, sniff_error := ParseConnectionProtocol(conn)
+	if sniff_error != nil && protocol_result == nil {
+		debug.Warn("proxy", fmt.Sprintf("Protocol sniff failed for %s:%d: %v", mapping.Hostname, port, sniff_error), map[string]any{
+			"profileId": profileID,
+			"hostname":  mapping.Hostname,
+		})
+		return
+	}
+
+	// Wrap connection to replay prefetched bytes
+	var proxied_conn net.Conn = conn
+	if protocol_result != nil && len(protocol_result.PrefetchBytes) > 0 {
+		proxied_conn = NewPrefixedConn(conn, protocol_result.PrefetchBytes)
+	}
+
+	// Build traffic entry for monitoring
+	connection_id := uuid.New().String()
+	sni_hostname := ""
+	detected_hint := ProtocolHintPlain
+	if protocol_result != nil {
+		sni_hostname = protocol_result.ServerName
+		detected_hint = protocol_result.ProtocolHint
+	}
+
+	traffic_entry := TrafficEntry{
+		ConnectionID: connection_id,
+		Hostname:     mapping.Hostname,
+		SNIHostname:  sni_hostname,
+		TunnelIP:     tunnelIP,
+		RealIP:       mapping.RealIP,
+		ProfileID:    profileID,
+		Port:         port,
+		ProtocolHint: detected_hint,
+	}
+	GetTrafficMonitor().RecordConnectionOpen(traffic_entry)
+
+	// Enable TCP keepalive on the client-side connection to prevent NAT timeouts
+	if tcp_conn, is_tcp := conn.(*net.TCPConn); is_tcp {
+		tcp_conn.SetKeepAlive(true)
+		tcp_conn.SetKeepAlivePeriod(60 * time.Second)
+	}
+
+	// Connect to the real destination
 	realAddr := fmt.Sprintf("%s:%d", mapping.RealIP, port)
-	remote, err := tunnel.Dial("tcp", realAddr)
+	var remote net.Conn
+	var err error
+	if profileID == InternetProfileID {
+		// Direct internet connection — no tunnel needed
+		remote, err = net.DialTimeout("tcp", realAddr, 10*time.Second)
+	} else {
+		// Route through VPN tunnel
+		tunnel := tcp_proxy.tunnelGetter(profileID)
+		if tunnel == nil {
+			debug.Error("proxy", fmt.Sprintf("Tunnel not connected for profile %s — cannot relay %s:%d", profileID, mapping.Hostname, port), map[string]any{
+				"profileId": profileID,
+				"hostname":  mapping.Hostname,
+				"realAddr":  realAddr,
+			})
+			GetTrafficMonitor().CloseConnection(connection_id, 0, 0)
+			return
+		}
+		remote, err = tunnel.Dial("tcp", realAddr)
+	}
 	if err != nil {
-		log.Printf("TCP proxy: failed to dial %s via tunnel %s: %v", realAddr, profileID, err)
+		debug.Error("proxy", fmt.Sprintf("Failed to dial %s via %s: %v", realAddr, profileID, err), map[string]any{
+			"profileId": profileID,
+			"hostname":  mapping.Hostname,
+			"realAddr":  realAddr,
+		})
+		GetTrafficMonitor().CloseConnection(connection_id, 0, 0)
 		return
 	}
 	defer remote.Close()
 
-	log.Printf("TCP proxy: %s -> %s:%d via %s (real: %s)",
-		conn.RemoteAddr(), tunnelIP, port, profileID, realAddr)
+	// Enable TCP keepalive on the remote-side connection to prevent NAT timeouts
+	if tcp_remote, is_tcp := remote.(*net.TCPConn); is_tcp {
+		tcp_remote.SetKeepAlive(true)
+		tcp_remote.SetKeepAlivePeriod(60 * time.Second)
+	}
 
-	// Bidirectional relay
-	tcp_proxy.relay(conn, remote)
+	route_label := profileID
+	if profileID == InternetProfileID {
+		route_label = "internet"
+	}
+	debug.Info("proxy", fmt.Sprintf("Relay %s -> %s:%d via %s [%s]", mapping.Hostname, mapping.RealIP, port, route_label, detected_hint), map[string]any{
+		"profileId": profileID,
+		"hostname":  mapping.Hostname,
+		"realAddr":  realAddr,
+		"protocol":  string(detected_hint),
+	})
+
+	// Bidirectional relay with byte counting
+	tcp_proxy.relay(proxied_conn, remote, connection_id, mapping.Hostname, profileID)
 }
 
-func (tcp_proxy *TCPProxy) relay(local, remote net.Conn) {
+func (tcp_proxy *TCPProxy) relay(local, remote net.Conn, connection_id string, hostname string, profileID string) {
 	ctx, cancel := context.WithCancel(tcp_proxy.ctx)
 	defer cancel()
 
-	// Local to remote
+	bytes_sent_counter := &atomic.Int64{}
+	bytes_received_counter := &atomic.Int64{}
+
+	// Track which side closed first
+	var close_reason atomic.Value
+	close_reason.Store("unknown")
+
+	// Local to remote (upload)
 	go func() {
 		defer cancel()
-		io.Copy(remote, local)
+		counting_remote := NewCountingWriter(remote, bytes_sent_counter)
+		_, copy_err := io.Copy(counting_remote, local)
+		if copy_err != nil {
+			close_reason.Store(fmt.Sprintf("upload error: %v", copy_err))
+		} else {
+			close_reason.Store("client closed")
+		}
 	}()
 
-	// Remote to local
+	// Remote to local (download)
 	go func() {
 		defer cancel()
-		io.Copy(local, remote)
+		counting_local := NewCountingWriter(local, bytes_received_counter)
+		_, copy_err := io.Copy(counting_local, remote)
+		if copy_err != nil {
+			close_reason.Store(fmt.Sprintf("download error: %v", copy_err))
+		} else {
+			close_reason.Store("server closed")
+		}
+	}()
+
+	// Periodic byte count updates: fast initial update (200ms), then every 1 second
+	go func() {
+		// Fast first update so the UI shows non-zero data quickly
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+			GetTrafficMonitor().UpdateConnectionBytes(
+				connection_id,
+				bytes_sent_counter.Load(),
+				bytes_received_counter.Load(),
+			)
+		}
+
+		update_ticker := time.NewTicker(1 * time.Second)
+		defer update_ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-update_ticker.C:
+				GetTrafficMonitor().UpdateConnectionBytes(
+					connection_id,
+					bytes_sent_counter.Load(),
+					bytes_received_counter.Load(),
+				)
+			}
+		}
 	}()
 
 	<-ctx.Done()
+
+	final_sent := bytes_sent_counter.Load()
+	final_recv := bytes_received_counter.Load()
+	reason := close_reason.Load().(string)
+
+	debug.Info("proxy", fmt.Sprintf("Relay closed %s — %s (sent=%d, recv=%d)", hostname, reason, final_sent, final_recv), map[string]any{
+		"profileId":    profileID,
+		"hostname":     hostname,
+		"closeReason":  reason,
+		"bytesSent":    final_sent,
+		"bytesReceived": final_recv,
+	})
+
+	// Final update with exact counts
+	GetTrafficMonitor().CloseConnection(
+		connection_id,
+		final_sent,
+		final_recv,
+	)
 }
 
 // UpdateConfig updates the TCP proxy configuration

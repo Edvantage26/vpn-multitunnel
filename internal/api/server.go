@@ -44,6 +44,11 @@ type DebugProvider interface {
 	// VPN Control
 	Connect(id string) error
 	Disconnect(id string) error
+	GetConnectErrors() map[string]string
+
+	// OpenVPN
+	GetOpenVPNStatusMap() map[string]any
+	InstallOpenVPN() error
 
 	// System
 	GetSystemInfo() debug.SystemInfo
@@ -94,7 +99,10 @@ func (api_server *Server) Start() error {
 	mux.HandleFunc("/api/dns-restore", api_server.handleDNSRestore)
 	mux.HandleFunc("/api/vpn-connect", api_server.handleVPNConnect)
 	mux.HandleFunc("/api/vpn-disconnect", api_server.handleVPNDisconnect)
+	mux.HandleFunc("/api/connect-errors", api_server.handleConnectErrors)
 	mux.HandleFunc("/api/health", api_server.handleHealth)
+	mux.HandleFunc("/api/openvpn-status", api_server.handleOpenVPNStatus)
+	mux.HandleFunc("/api/openvpn-upgrade", api_server.handleOpenVPNUpgrade)
 
 	// CORS middleware
 	handler := corsMiddleware(mux)
@@ -103,8 +111,8 @@ func (api_server *Server) Start() error {
 	api_server.server = &http.Server{
 		Addr:         addr,
 		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: 5 * time.Minute,
 	}
 
 	listener, err := net.Listen("tcp", addr)
@@ -190,6 +198,29 @@ func (api_server *Server) handleHealth(response_writer http.ResponseWriter, http
 	}
 
 	writeSuccess(response_writer, map[string]string{"status": "ok"})
+}
+
+// handleOpenVPNStatus handles GET /api/openvpn-status
+func (api_server *Server) handleOpenVPNStatus(response_writer http.ResponseWriter, http_request *http.Request) {
+	if http_request.Method != http.MethodGet {
+		writeError(response_writer, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	writeSuccess(response_writer, api_server.provider.GetOpenVPNStatusMap())
+}
+
+// handleOpenVPNUpgrade handles POST /api/openvpn-upgrade
+func (api_server *Server) handleOpenVPNUpgrade(response_writer http.ResponseWriter, http_request *http.Request) {
+	if http_request.Method != http.MethodPost {
+		writeError(response_writer, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	install_err := api_server.provider.InstallOpenVPN()
+	if install_err != nil {
+		writeSuccess(response_writer, map[string]any{"success": false, "error": install_err.Error()})
+		return
+	}
+	writeSuccess(response_writer, map[string]any{"success": true})
 }
 
 // handleStatus handles GET /api/status
@@ -488,6 +519,15 @@ func (api_server *Server) handleVPNDisconnect(response_writer http.ResponseWrite
 		return
 	}
 	writeSuccess(response_writer, map[string]any{"success": true, "profileId": req.ProfileID})
+}
+
+// handleConnectErrors handles GET /api/connect-errors
+func (api_server *Server) handleConnectErrors(response_writer http.ResponseWriter, http_request *http.Request) {
+	if http_request.Method != http.MethodGet {
+		writeError(response_writer, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	writeSuccess(response_writer, api_server.provider.GetConnectErrors())
 }
 
 // FindMatchingRule finds a DNS rule that matches a hostname

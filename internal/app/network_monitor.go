@@ -122,6 +122,9 @@ func (app *App) checkActiveInterfaceChange() {
 	app.lastActiveInterface = current_interface
 	app.mu.Unlock()
 
+	// Always flush DNS cache on network change
+	system.FlushDNSCache()
+
 	// Only reconfigure if DNS was configured by us
 	if !app.networkConfig.IsTransparentDNSConfigured() {
 		log.Printf("[network-monitor] DNS not configured by us, skipping reconfiguration")
@@ -158,6 +161,8 @@ func (app *App) ensureSystemDNSConfigured() {
 
 	// Already configured — nothing to repair
 	if app.networkConfig.IsTransparentDNSConfigured() {
+		// Even when configured, check that all connected adapters have our DNS
+		app.ensureAllAdaptersUseDNSProxy()
 		return
 	}
 
@@ -181,6 +186,79 @@ func (app *App) ensureSystemDNSConfigured() {
 		app.mu.Lock()
 		app.dnsHealthIssue = "DNS auto-configuration failed: system DNS not pointing to proxy"
 		app.mu.Unlock()
+	}
+}
+
+// ensureAllAdaptersUseDNSProxy checks all UP adapters with DNS configured and ensures
+// they point to our DNS proxy. This handles the case where multiple adapters are active
+// (e.g., Ethernet + WiFi) and some may have router DNS instead of proxy DNS.
+func (app *App) ensureAllAdaptersUseDNSProxy() {
+	dns_proxy_address := app.config.DNSProxy.GetListenAddress()
+
+	adapters, get_err := system.GetAllAdapters()
+	if get_err != nil {
+		return
+	}
+
+	// Skip these adapter types — they're internal/virtual and shouldn't have DNS reconfigured
+	skip_prefixes := []string{
+		"Loopback", "vEthernet", "VirtualBox", "VMware", "Tailscale",
+		"OpenVPN", "Local Area Connection 2", "Local Area Connection 3",
+		"Local Area Connection 4", "Local Area Connection 5",
+		"Local Area Connection 6", "Local Area Connection 7",
+		"Local Area Connection 8",
+	}
+
+	for _, adapter := range adapters {
+		if !adapter.IsUp() {
+			continue
+		}
+		if len(adapter.DNSServers) == 0 {
+			continue
+		}
+		if len(adapter.IPv4Addrs) == 0 {
+			continue
+		}
+
+		// Skip virtual/internal adapters
+		should_skip := false
+		for _, prefix := range skip_prefixes {
+			if len(adapter.Name) >= len(prefix) && adapter.Name[:len(prefix)] == prefix {
+				should_skip = true
+				break
+			}
+		}
+		if should_skip {
+			continue
+		}
+
+		// Check if this adapter already has our DNS proxy
+		already_configured := false
+		for _, dns_server := range adapter.DNSServers {
+			if dns_server == dns_proxy_address {
+				already_configured = true
+				break
+			}
+		}
+
+		if already_configured {
+			continue
+		}
+
+		// This adapter is UP, has DNS servers, but doesn't point to our proxy
+		log.Printf("[network-monitor] Adapter %q has DNS %v but not proxy %s — configuring...",
+			adapter.Name, adapter.DNSServers, dns_proxy_address)
+
+		// Save original DNS before overwriting
+		app.networkConfig.SaveOriginalDNS(adapter.Name, adapter.DNSServers)
+
+		// Set DNS to proxy
+		if set_err := app.networkConfig.SetDNSForInterface(adapter.Name, dns_proxy_address); set_err != nil {
+			log.Printf("[network-monitor] Failed to set DNS on %q: %v", adapter.Name, set_err)
+		} else {
+			log.Printf("[network-monitor] Configured DNS proxy on adapter %q", adapter.Name)
+			system.FlushDNSCache()
+		}
 	}
 }
 

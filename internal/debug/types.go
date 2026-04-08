@@ -115,7 +115,9 @@ type DNSDiagnostic struct {
 type VPNStatusInfo struct {
 	ProfileID     string    `json:"profileId"`
 	ProfileName   string    `json:"profileName"`
+	VPNType       string    `json:"vpnType"`
 	Connected     bool      `json:"connected"`
+	Connecting    bool      `json:"connecting"`
 	Healthy       bool      `json:"healthy"`
 	Endpoint      string    `json:"endpoint"`
 	TunnelIP      string    `json:"tunnelIP"`
@@ -123,6 +125,7 @@ type VPNStatusInfo struct {
 	BytesRecv     uint64    `json:"bytesRecv"`
 	LastHandshake time.Time `json:"lastHandshake"`
 	AvgLatencyMs  float64   `json:"avgLatencyMs"`
+	LastError     string    `json:"lastError,omitempty"`
 }
 
 // DiagnosticReport contains a full diagnostic report

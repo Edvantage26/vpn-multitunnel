@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -157,16 +159,42 @@ func (host_mapping_cache *HostMappingCache) Clear() {
 	host_mapping_cache.byHostname = make(map[string]*HostMapping)
 }
 
-// Cleanup removes expired mappings
+// Cleanup removes expired mappings and releases their IP allocations
 func (host_mapping_cache *HostMappingCache) Cleanup() {
 	host_mapping_cache.mu.Lock()
 	defer host_mapping_cache.mu.Unlock()
 
 	now := time.Now()
+	purged_count := 0
 	for hostname, mapping := range host_mapping_cache.byHostname {
 		if now.Sub(mapping.ResolvedAt) > host_mapping_cache.mappingTTL {
 			delete(host_mapping_cache.byTunnelIP, mapping.TunnelIP)
 			delete(host_mapping_cache.byHostname, hostname)
+			// Release IP allocation so it can be reused
+			if allocated_ip, has_ip := host_mapping_cache.ipPool[hostname]; has_ip {
+				delete(host_mapping_cache.usedIPs, allocated_ip)
+				delete(host_mapping_cache.ipPool, hostname)
+			}
+			purged_count++
 		}
 	}
+	if purged_count > 0 {
+		log.Printf("HostMapping: cleaned up %d expired entries", purged_count)
+	}
+}
+
+// StartCleanupLoop runs Cleanup() periodically in the background
+func (host_mapping_cache *HostMappingCache) StartCleanupLoop(cleanup_ctx context.Context) {
+	cleanup_ticker := time.NewTicker(5 * time.Minute)
+	go func() {
+		defer cleanup_ticker.Stop()
+		for {
+			select {
+			case <-cleanup_ctx.Done():
+				return
+			case <-cleanup_ticker.C:
+				host_mapping_cache.Cleanup()
+			}
+		}
+	}()
 }

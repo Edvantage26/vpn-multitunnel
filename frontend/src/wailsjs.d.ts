@@ -33,6 +33,8 @@ declare global {
           UpdateDNSProxyConfig: (config: DNSProxyConfig) => Promise<void>
           GetTCPProxyConfig: () => Promise<TCPProxyConfig>
           UpdateTCPProxyConfig: (config: TCPProxyConfig) => Promise<void>
+          GetProfileLogs: (profileId: string, level: string, limit: number) => Promise<LogEntry[]>
+          GetProfileErrors: (profileId: string, limit: number) => Promise<ErrorEntry[]>
         }
       }
     }
@@ -168,4 +170,25 @@ interface TCPProxyConfig {
   enabled: boolean
   tunnelIPs: Record<string, string>
   ports: number[]
+}
+
+interface LogEntry {
+  timestamp: string
+  level: 'debug' | 'info' | 'warn' | 'error'
+  component: string
+  profileId: string
+  message: string
+  fields?: Record<string, unknown>
+}
+
+interface ErrorEntry {
+  timestamp: string
+  component: string
+  profileId: string
+  operation: string
+  error: string
+  stackTrace?: string
+  context?: Record<string, unknown>
+  resolved: boolean
+  resolvedAt?: string
 }

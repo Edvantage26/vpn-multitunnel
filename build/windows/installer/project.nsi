@@ -170,7 +170,9 @@ Section
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${INFO_PRODUCTNAME}"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "VPNMultiTunnel"
     # Create scheduled task with 10s delay after logon (PowerShell handles current user automatically)
-    nsExec::ExecToLog 'powershell -ExecutionPolicy Bypass -Command "$$action = New-ScheduledTaskAction -Execute \"$INSTDIR\${PRODUCT_EXECUTABLE}\"; $$trigger = New-ScheduledTaskTrigger -AtLogOn -User $$env:USERNAME; $$trigger.Delay = \"PT10S\"; $$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable; Register-ScheduledTask -TaskName \"VPNMultiTunnel Autostart\" -Action $$action -Trigger $$trigger -Settings $$settings -Force"'
+    # Remove old task name if present (renamed from "VPNMultiTunnel Autostart" to "VPN MultiTunnel")
+    nsExec::ExecToLog 'schtasks /Delete /TN "VPNMultiTunnel Autostart" /F'
+    nsExec::ExecToLog 'powershell -ExecutionPolicy Bypass -Command "$$action = New-ScheduledTaskAction -Execute \"$INSTDIR\${PRODUCT_EXECUTABLE}\"; $$trigger = New-ScheduledTaskTrigger -AtLogOn -User $$env:USERNAME; $$trigger.Delay = \"PT10S\"; $$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable; Register-ScheduledTask -TaskName \"VPN MultiTunnel\" -Action $$action -Trigger $$trigger -Settings $$settings -Force"'
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
@@ -229,6 +231,7 @@ Section "uninstall"
 
     # Remove autostart configuration (Scheduled Task + legacy registry keys)
     DetailPrint "Removing autostart configuration..."
+    nsExec::ExecToLog 'schtasks /Delete /TN "VPN MultiTunnel" /F'
     nsExec::ExecToLog 'schtasks /Delete /TN "VPNMultiTunnel Autostart" /F'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${INFO_PRODUCTNAME}"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "VPNMultiTunnel"

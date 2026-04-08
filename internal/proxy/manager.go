@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -35,8 +36,10 @@ type Manager struct {
 
 // NewManager creates a new proxy manager
 func NewManager() *Manager {
+	host_mapping_cache := NewHostMappingCache(2 * time.Hour)
+	host_mapping_cache.StartCleanupLoop(context.Background())
 	return &Manager{
-		hostMapping:   NewHostMappingCache(2 * time.Hour),
+		hostMapping: host_mapping_cache,
 	}
 }
 
@@ -239,6 +242,11 @@ func (proxy_manager *Manager) GetTCPProxyListenerCount() int {
 		return proxy_manager.tcpProxy.GetListenerCount()
 	}
 	return 0
+}
+
+// GetTrafficMonitor returns the traffic monitor singleton
+func (proxy_manager *Manager) GetTrafficMonitor() *TrafficMonitor {
+	return GetTrafficMonitor()
 }
 
 // ResolveViaTunnel resolves a hostname using a specific tunnel's DNS server
