@@ -1,10 +1,10 @@
 {
   "fixed": {
-    "file_version": "1.0.13.0"
+    "file_version": "1.1.0.0"
   },
   "info": {
     "0000": {
-      "ProductVersion": "1.0.13",
+      "ProductVersion": "1.1.0",
       "CompanyName": "Edvantage",
       "FileDescription": "VPN MultiTunnel - Multi-tunnel WireGuard VPN Manager",
       "LegalCopyright": "© 2025 Edgar Alarcon",
