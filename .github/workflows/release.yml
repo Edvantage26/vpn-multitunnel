@@ -61,10 +61,9 @@ jobs:
           cd build\windows\installer
           makensis /DARG_WAILS_AMD64_BINARY=..\..\bin\VPNMultiTunnel.exe project.nsi
 
-      - name: Create GitHub Release
+      - name: Upload installer to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: VPN MultiTunnel ${{ steps.version.outputs.semver }}
-          generate_release_notes: true
           files: build/bin/VPNMultiTunnel-amd64-installer.exe
