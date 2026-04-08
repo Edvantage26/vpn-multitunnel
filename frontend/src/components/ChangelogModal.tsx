@@ -1,5 +1,30 @@
 import type { UpdateInfo, ReleaseEntry } from '../App'
 
+function ReleaseNotes({ markdown }: { markdown: string }) {
+  const lines = markdown.split('\n')
+  const elements: JSX.Element[] = []
+
+  for (let line_index = 0; line_index < lines.length; line_index++) {
+    const line = lines[line_index]
+    if (line.startsWith('## ')) {
+      elements.push(
+        <h4 key={line_index} className="text-xs font-semibold text-dark-200 uppercase tracking-wider mt-2 first:mt-0 mb-1">
+          {line.slice(3)}
+        </h4>
+      )
+    } else if (line.startsWith('- ')) {
+      elements.push(
+        <div key={line_index} className="flex gap-1.5 text-xs text-dark-400 py-0.5">
+          <span className="text-dark-500 flex-shrink-0">•</span>
+          <span>{line.slice(2)}</span>
+        </div>
+      )
+    }
+  }
+
+  return <div>{elements}</div>
+}
+
 interface ChangelogModalProps {
   updateInfo: UpdateInfo
   updateDownloading: boolean
@@ -36,7 +61,7 @@ function ChangelogModal({ updateInfo, updateDownloading, onUpdateInstall, onClos
                 <p className="text-sm text-dark-200 mb-1">{release_entry.name}</p>
               )}
               {release_entry.notes && (
-                <p className="text-xs text-dark-400 whitespace-pre-wrap">{release_entry.notes}</p>
+                <ReleaseNotes markdown={release_entry.notes} />
               )}
             </div>
           ))}

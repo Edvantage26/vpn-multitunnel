@@ -313,6 +313,13 @@ function App() {
   const [showChangelogModal, setShowChangelogModal] = useState(false)
   const [activeView, setActiveView] = useState<NavView>('connections')
   const [advancedMode, setAdvancedMode] = useState(false)
+  // Delete confirmation modal state
+  const [deleteModal, setDeleteModal] = useState<{
+    profileId: string
+    profileName: string
+    configPath?: string
+    deleteConfig: boolean
+  } | null>(null)
 
   const showNotification = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message })
@@ -507,24 +514,30 @@ function App() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this tunnel?')) return
-
-    let shouldDeleteConfigFile = false
+    const profile_entry = profiles.find(entry => entry.id === id)
+    const is_external = profile_entry?.type === 'external'
+    let config_path: string | undefined
     try {
-      const configFilePath = await window.go.app.App.GetProfileConfigPath(id)
-      if (configFilePath) {
-        shouldDeleteConfigFile = confirm(
-          `Do you also want to delete the VPN config file?\n\n${configFilePath}`
-        )
-      }
+      config_path = await window.go.app.App.GetProfileConfigPath(id)
     } catch {
-      // If we can't get the path, just skip the config file deletion prompt
+      // Ignore — config path is optional
     }
+    setDeleteModal({
+      profileId: id,
+      profileName: profile_entry?.name || id,
+      configPath: is_external ? undefined : config_path || undefined,
+      deleteConfig: is_external, // Always delete .extjson files
+    })
+  }
 
+  const handleConfirmDelete = async () => {
+    if (!deleteModal) return
+    const { profileId, deleteConfig } = deleteModal
+    setDeleteModal(null)
     try {
-      await window.go.app.App.DeleteProfile(id, shouldDeleteConfigFile)
+      await window.go.app.App.DeleteProfile(profileId, deleteConfig)
       showNotification('success', 'Tunnel deleted')
-      if (selectedId === id) {
+      if (selectedId === profileId) {
         setSelectedId(undefined)
         setSelectedProfile(null)
       }
@@ -696,6 +709,40 @@ function App() {
           />
         )}
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {deleteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="card w-full max-w-sm mx-4 p-6">
+            <h2 className="text-lg font-bold text-white mb-2">Delete Connection</h2>
+            <p className="text-sm text-dark-400 mb-4">
+              Are you sure you want to delete <span className="text-dark-200 font-medium">{deleteModal.profileName}</span>?
+            </p>
+            {deleteModal.configPath && (
+              <label className="flex items-start gap-2 text-sm text-dark-400 cursor-pointer mb-4 p-2 bg-dark-800 rounded">
+                <input
+                  type="checkbox"
+                  checked={deleteModal.deleteConfig}
+                  onChange={(event) => setDeleteModal({ ...deleteModal, deleteConfig: event.target.checked })}
+                  className="mt-0.5 rounded border-dark-500 text-primary-500"
+                />
+                <div>
+                  <span className="text-dark-300">Also delete config file</span>
+                  <p className="text-xs text-dark-500 font-mono mt-0.5 break-all">{deleteModal.configPath}</p>
+                </div>
+              </label>
+            )}
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setDeleteModal(null)} className="btn btn-secondary">
+                Cancel
+              </button>
+              <button onClick={handleConfirmDelete} className="btn bg-red-600 hover:bg-red-500 text-white">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       {showAddModal && (

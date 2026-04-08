@@ -564,12 +564,6 @@ var vpnAdapterKeywords = []string{
 	"cloudflare warp", "mullvad", "nordlynx", "proton",
 }
 
-// systemAdapterKeywords are substrings that identify system/virtual adapters to deprioritize
-var systemAdapterKeywords = []string{
-	"loopback", "vethernet", "virtualbox", "vmware", "hyper-v",
-	"bluetooth", "docker", "wsl",
-}
-
 // GetNetworkAdapters returns all network adapters with VPN heuristic flags
 func (app *App) GetNetworkAdapters() []AdapterSummary {
 	adapters, fetch_err := system.GetAllAdapters()
@@ -592,18 +586,9 @@ func (app *App) GetNetworkAdapters() []AdapterSummary {
 			}
 		}
 
-		// Skip system/virtual adapters unless they match VPN keywords
+		// Only show VPN adapters
 		if !is_vpn {
-			is_system := false
-			for _, keyword := range systemAdapterKeywords {
-				if strings.Contains(lower_name, keyword) || strings.Contains(lower_desc, keyword) {
-					is_system = true
-					break
-				}
-			}
-			if is_system {
-				continue
-			}
+			continue
 		}
 
 		result = append(result, AdapterSummary{
@@ -612,17 +597,8 @@ func (app *App) GetNetworkAdapters() []AdapterSummary {
 			IPv4Addrs:   adapter.IPv4Addrs,
 			DNSServers:  adapter.DNSServers,
 			IsUp:        adapter.IsUp(),
-			IsVPN:       is_vpn,
+			IsVPN:       true,
 		})
-	}
-
-	// Sort: VPN adapters first, then by name
-	for current_position := 0; current_position < len(result); current_position++ {
-		for compare_position := current_position + 1; compare_position < len(result); compare_position++ {
-			if !result[current_position].IsVPN && result[compare_position].IsVPN {
-				result[current_position], result[compare_position] = result[compare_position], result[current_position]
-			}
-		}
 	}
 
 	return result

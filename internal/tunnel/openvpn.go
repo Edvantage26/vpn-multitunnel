@@ -3,7 +3,6 @@ package tunnel
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"vpnmultitunnel/internal/config"
+	"vpnmultitunnel/internal/debug"
 	"vpnmultitunnel/internal/system"
 )
 
@@ -108,6 +108,7 @@ func NewOpenVPNTunnel(profileID string, ovpnConfig *config.OpenVPNConfig, config
 		"--management", "127.0.0.1", fmt.Sprintf("%d", managementPort),
 		"--management-query-passwords",
 		"--auth-retry", "interact",
+		"--disable-dco",
 	}
 
 	ovpnTunnel.Process = exec.Command(openVPNBinaryPath, commandArgs...)
@@ -119,7 +120,7 @@ func NewOpenVPNTunnel(profileID string, ovpnConfig *config.OpenVPNConfig, config
 	ovpnTunnel.Process.Stdout = safeOutputWriter
 	ovpnTunnel.Process.Stderr = safeOutputWriter
 
-	log.Printf("[OpenVPN/%s] Running: %s %s", profileID, openVPNBinaryPath, strings.Join(commandArgs, " "))
+	debug.Info("openvpn", fmt.Sprintf("Running: %s %s", openVPNBinaryPath, strings.Join(commandArgs, " ")), map[string]any{"profileId": profileID})
 
 	if startErr := ovpnTunnel.Process.Start(); startErr != nil {
 		return nil, fmt.Errorf("failed to start openvpn.exe: %w", startErr)
@@ -189,7 +190,7 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 	}
 	defer managementConn.Close()
 
-	log.Printf("[OpenVPN/%s] Connected to management interface", ovpn_tunnel.ProfileID)
+	debug.Info("openvpn", "Connected to management interface", map[string]any{"profileId": ovpn_tunnel.ProfileID})
 
 	lineReader := bufio.NewReader(managementConn)
 	var detectedVPNIP string
@@ -220,7 +221,7 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 				readAttempts++
 				// After a few silent timeouts, try sending commands to wake up the interface
 				if !stateOnSent && readAttempts >= 2 {
-					log.Printf("[OpenVPN/%s] No data from management after %d attempts, sending state on", ovpn_tunnel.ProfileID, readAttempts)
+					debug.Debug("openvpn", fmt.Sprintf("No data from management after %d attempts, sending state on", readAttempts), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 					managementConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 					fmt.Fprintf(managementConn, "state on\n")
 					fmt.Fprintf(managementConn, "state\n")
@@ -235,7 +236,7 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 		if trimmedLine == "" {
 			continue
 		}
-		log.Printf("[OpenVPN/%s] mgmt: %s", ovpn_tunnel.ProfileID, trimmedLine)
+		debug.Debug("openvpn", fmt.Sprintf("mgmt: %s", trimmedLine), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 
 		switch {
 		// Banner or info messages — now send state on
@@ -243,7 +244,7 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 			if !stateOnSent {
 				managementConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 				fmt.Fprintf(managementConn, "state on\n")
-				log.Printf("[OpenVPN/%s] mgmt >> state on", ovpn_tunnel.ProfileID)
+				debug.Debug("openvpn", "mgmt >> state on", map[string]any{"profileId": ovpn_tunnel.ProfileID})
 				stateOnSent = true
 			}
 
@@ -251,21 +252,21 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 		case strings.HasPrefix(trimmedLine, ">HOLD:"):
 			managementConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			fmt.Fprintf(managementConn, "hold release\n")
-			log.Printf("[OpenVPN/%s] mgmt >> hold release", ovpn_tunnel.ProfileID)
+			debug.Debug("openvpn", "mgmt >> hold release", map[string]any{"profileId": ovpn_tunnel.ProfileID})
 
 		// Real-time state change: >STATE:<timestamp>,<state>,<detail>,<local_ip>,...
 		case strings.HasPrefix(trimmedLine, ">STATE:"):
 			stateParts := strings.Split(trimmedLine, ",")
 			if len(stateParts) >= 2 {
 				stateValue := stateParts[1]
-				log.Printf("[OpenVPN/%s] State: %s", ovpn_tunnel.ProfileID, stateValue)
+				debug.Info("openvpn", fmt.Sprintf("State: %s", stateValue), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 
 				if stateValue == "CONNECTED" {
 					connected = true
 					// Extract local VPN IP from state line (field index 3)
 					if len(stateParts) >= 4 && stateParts[3] != "" {
 						detectedVPNIP = stateParts[3]
-						log.Printf("[OpenVPN/%s] VPN IP from state: %s", ovpn_tunnel.ProfileID, detectedVPNIP)
+						debug.Info("openvpn", fmt.Sprintf("VPN IP from state: %s", detectedVPNIP), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 					}
 				}
 			}
@@ -278,7 +279,7 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 				if ovpn_tunnel.Username == "" {
 					return fmt.Errorf("OpenVPN requires username/password but no credentials were provided")
 				}
-				log.Printf("[OpenVPN/%s] Providing Auth credentials for user '%s'", ovpn_tunnel.ProfileID, ovpn_tunnel.Username)
+				debug.Info("openvpn", fmt.Sprintf("Providing Auth credentials for user '%s'", ovpn_tunnel.Username), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 				fmt.Fprintf(managementConn, "username \"Auth\" %s\n", ovpn_tunnel.Username)
 				fmt.Fprintf(managementConn, "password \"Auth\" %s\n", ovpn_tunnel.Password)
 			} else if strings.Contains(trimmedLine, "Need 'Private Key'") {
@@ -289,7 +290,7 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 			} else if strings.Contains(trimmedLine, "Verification Failed") {
 				return fmt.Errorf("OpenVPN authentication failed: invalid username or password")
 			} else {
-				log.Printf("[OpenVPN/%s] Unhandled password prompt: %s", ovpn_tunnel.ProfileID, trimmedLine)
+				debug.Warn("openvpn", fmt.Sprintf("Unhandled password prompt: %s", trimmedLine), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 			}
 
 		// Fatal error from OpenVPN
@@ -325,8 +326,7 @@ func (ovpn_tunnel *OpenVPNTunnel) waitForConnection(timeout time.Duration) error
 			DNSServerAddr: dnsServer,
 			AssignedAddr:  detectedVPNIP,
 		}
-		log.Printf("[OpenVPN/%s] Using VPN IP %s from management interface, DNS %s",
-			ovpn_tunnel.ProfileID, detectedVPNIP, dnsServer)
+		debug.Info("openvpn", fmt.Sprintf("Using VPN IP %s from management interface, DNS %s", detectedVPNIP, dnsServer), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 	} else {
 		// Fallback: scan for the adapter
 		if detectErr := ovpn_tunnel.detectAdapterIP(10 * time.Second); detectErr != nil {
@@ -370,8 +370,7 @@ func (ovpn_tunnel *OpenVPNTunnel) detectAdapterIP(timeout time.Duration) error {
 				AssignedAddr:  assignedIP,
 			}
 
-			log.Printf("[OpenVPN/%s] Detected adapter '%s' with IP %s, DNS %s",
-				ovpn_tunnel.ProfileID, matchedAdapter.Name, assignedIP, dnsServer)
+			debug.Info("openvpn", fmt.Sprintf("Detected adapter '%s' with IP %s, DNS %s", matchedAdapter.Name, assignedIP, dnsServer), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 			return nil
 		}
 	}
@@ -397,9 +396,9 @@ func (ovpn_tunnel *OpenVPNTunnel) monitorProcess() {
 	case exitErr := <-ovpn_tunnel.processExitedCh:
 		// Process exited on its own
 		if exitErr != nil {
-			log.Printf("[OpenVPN/%s] Process exited with error: %v", ovpn_tunnel.ProfileID, exitErr)
+			debug.Warn("openvpn", fmt.Sprintf("Process exited with error: %v", exitErr), map[string]any{"profileId": ovpn_tunnel.ProfileID})
 		} else {
-			log.Printf("[OpenVPN/%s] Process exited normally", ovpn_tunnel.ProfileID)
+			debug.Info("openvpn", "Process exited normally", map[string]any{"profileId": ovpn_tunnel.ProfileID})
 		}
 	}
 
@@ -446,7 +445,7 @@ func (locked_writer *lockedWriter) Write(data []byte) (int, error) {
 	locked_writer.tunnel.mu.Unlock()
 	trimmedData := strings.TrimSpace(string(data))
 	if trimmedData != "" {
-		log.Printf("[OpenVPN/%s] stdout: %s", locked_writer.profileID, trimmedData)
+		debug.Debug("openvpn", fmt.Sprintf("stdout: %s", trimmedData), map[string]any{"profileId": locked_writer.profileID})
 	}
 	return len(data), nil
 }

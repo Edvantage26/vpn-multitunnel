@@ -104,6 +104,22 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
 
   const has_dns_server = imported_profile?.dns?.server ? true : false
 
+  // Generate a default DNS suffix from a connection name
+  const generateDefaultSuffix = (connection_name: string): string => {
+    const words = connection_name.trim().toLowerCase().split(/\s+/).filter(word => word.length > 0)
+    if (words.length === 0) return ''
+    if (words.length >= 2) {
+      // If first word is 2-3 chars, use it as-is → "SVI Edgar" → ".svi"
+      if (words[0].length <= 3) return '.' + words[0]
+      // Multi-word: first letter of each word → "Baboon Technologies" → ".bt"
+      return '.' + words.map(word => word[0]).join('')
+    }
+    // Single word: first letter + last 2 letters → "Tailscale" → ".tle"
+    const single_word = words[0]
+    if (single_word.length <= 3) return '.' + single_word
+    return '.' + single_word[0] + single_word.slice(-2)
+  }
+
   // Load network adapters when external VPN type is selected
   useEffect(() => {
     if (selected_vpn_type === 'external' && !imported_profile) {
@@ -160,15 +176,18 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
 
   const handleCreateExternal = async () => {
     if (!manual_config_name.trim()) return
-    if (!external_adapter_name.trim() && !external_auto_detect) return
+    if (!external_adapter_name) return
     setIsImporting(true)
     setImportError('')
     try {
       const profile = await window.go.app.App.CreateExternalProfile(
-        manual_config_name.trim(), external_adapter_name.trim(), external_auto_detect, external_dns_server.trim()
+        manual_config_name.trim(), external_adapter_name.trim(), false, external_dns_server.trim()
       )
       setImportedProfile(profile)
       setProfileDisplayName(profile.name)
+      // Pre-fill DNS suffix and skip to step 2
+      setDnsSuffixInput(generateDefaultSuffix(manual_config_name.trim()))
+      setCurrentStep(2)
     } catch (err) {
       setImportError(String(err))
     } finally {
@@ -189,6 +208,7 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
         return
       }
     }
+    setDnsSuffixInput(generateDefaultSuffix(profile_display_name || imported_profile.name))
     setCurrentStep(2)
   }
 
@@ -308,8 +328,11 @@ function ImportWizard({ onClose, onComplete }: ImportWizardProps) {
     setIsTesting(true)
     setTestResult(null)
     try {
-      const [success, message] = await window.go.app.App.TestConnection(imported_profile.id, hostname, port_number)
-      setTestResult({ success, message, tested_url: full_tested_url })
+      const test_response = await window.go.app.App.TestConnection(imported_profile.id, hostname, port_number)
+      // Wails may return multiple Go returns as an array or object
+      const success = Array.isArray(test_response) ? test_response[0] : test_response
+      const message = Array.isArray(test_response) ? test_response[1] : ''
+      setTestResult({ success: !!success, message: String(message || ''), tested_url: full_tested_url })
     } catch (err) {
       setTestResult({ success: false, message: String(err), tested_url: full_tested_url })
     } finally {

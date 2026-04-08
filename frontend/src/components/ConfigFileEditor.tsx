@@ -13,9 +13,11 @@ function ConfigFileEditor({ profileId, profileName, configFile, onClose }: Confi
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+  const [configPath, setConfigPath] = useState('')
 
   useEffect(() => {
     loadContent()
+    window.go.app.App.GetProfileConfigPath(profileId).then(setConfigPath).catch(() => {})
   }, [profileId])
 
   const loadContent = async () => {
@@ -53,7 +55,7 @@ function ConfigFileEditor({ profileId, profileName, configFile, onClose }: Confi
         <div className="flex items-center justify-between p-4 border-b border-dark-700">
           <div>
             <h2 className="text-lg font-semibold text-white">WireGuard Config</h2>
-            <p className="text-xs text-dark-400">{profileName} - {configFile}</p>
+            <p className="text-xs text-dark-500 font-mono">{configPath || configFile}</p>
           </div>
           <button
             onClick={onClose}
