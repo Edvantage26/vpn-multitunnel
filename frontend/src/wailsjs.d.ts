@@ -24,6 +24,7 @@ declare global {
           GetSystemStatus: () => Promise<SystemStatus>
           ConfigureDNS: () => Promise<DNSConfigResult>
           RestoreDNS: () => Promise<void>
+          FixDNS: () => Promise<void>
           GetWireGuardConfig: (id: string) => Promise<WireGuardConfig>
           GetActiveConnections: () => Promise<ActiveConnection[]>
           TestConnection: (profileId: string, host: string, port: number) => Promise<[boolean, string]>

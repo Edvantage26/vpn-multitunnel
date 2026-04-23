@@ -328,6 +328,17 @@ func (app *App) checkDNSHealth() {
 }
 
 // attemptDNSProxyRestart tries to restart the DNS proxy on port 53 when it stops responding.
+// FixDNS restarts the DNS proxy and flushes the DNS cache. Exposed to frontend.
+func (app *App) FixDNS() error {
+	log.Printf("[dns] Manual DNS fix requested")
+	app.attemptDNSProxyRestart()
+	app.mu.Lock()
+	app.consecutiveDNSFailures = 0
+	app.dnsHealthIssue = ""
+	app.mu.Unlock()
+	return nil
+}
+
 func (app *App) attemptDNSProxyRestart() {
 	log.Printf("[network-monitor] Attempting DNS proxy restart on port 53...")
 

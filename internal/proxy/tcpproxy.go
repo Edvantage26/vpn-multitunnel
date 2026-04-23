@@ -289,6 +289,7 @@ func (tcp_proxy *TCPProxy) handleConnection(conn net.Conn, profileID string, tun
 }
 
 func (tcp_proxy *TCPProxy) relay(local, remote net.Conn, connection_id string, hostname string, profileID string) {
+	relay_start_time := time.Now()
 	ctx, cancel := context.WithCancel(tcp_proxy.ctx)
 	defer cancel()
 
@@ -355,16 +356,18 @@ func (tcp_proxy *TCPProxy) relay(local, remote net.Conn, connection_id string, h
 
 	<-ctx.Done()
 
+	relay_duration := time.Since(relay_start_time)
 	final_sent := bytes_sent_counter.Load()
 	final_recv := bytes_received_counter.Load()
 	reason := close_reason.Load().(string)
 
-	debug.Info("proxy", fmt.Sprintf("Relay closed %s — %s (sent=%d, recv=%d)", hostname, reason, final_sent, final_recv), map[string]any{
-		"profileId":    profileID,
-		"hostname":     hostname,
-		"closeReason":  reason,
-		"bytesSent":    final_sent,
-		"bytesReceived": final_recv,
+	debug.Warn("proxy", fmt.Sprintf("Relay closed %s — %s (sent=%d, recv=%d, duration=%s)", hostname, reason, final_sent, final_recv, relay_duration.Truncate(time.Second)), map[string]any{
+		"profileId":       profileID,
+		"hostname":        hostname,
+		"closeReason":     reason,
+		"bytesSent":       final_sent,
+		"bytesReceived":   final_recv,
+		"durationSeconds": int(relay_duration.Seconds()),
 	})
 
 	// Final update with exact counts

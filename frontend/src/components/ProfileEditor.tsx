@@ -374,7 +374,7 @@ function ProfileEditor({ profile, onSave, onClose }: ProfileEditorProps) {
           {/* TCP Proxy Ports */}
           <div>
             <h3 className="text-sm font-semibold text-dark-300 uppercase tracking-wider mb-3">
-              TCP Proxy Ports
+              Allowed Ports
             </h3>
             <p className="text-xs text-dark-400 mb-2">
               Ports proxied through this tunnel. Only traffic to these ports will be intercepted.

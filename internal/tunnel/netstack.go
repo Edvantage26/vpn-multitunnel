@@ -5,14 +5,18 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
+	"reflect"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
+	"gvisor.dev/gvisor/pkg/tcpip"
 
 	"vpnmultitunnel/internal/config"
 )
@@ -203,10 +207,56 @@ func (tunnel *Tunnel) Dial(network, addr string) (net.Conn, error) {
 
 	// Use the netstack's built-in DialContext which handles DNS resolution
 	// through the tunnel's configured DNS servers
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+	dial_ctx, dial_cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer dial_cancel()
 
-	return tunnel.Net.DialContext(ctx, network, addr)
+	tunnel_conn, dial_err := tunnel.Net.DialContext(dial_ctx, network, addr)
+	if dial_err != nil {
+		return nil, dial_err
+	}
+
+	// Enable TCP keepalive on gVisor connections to prevent stateful
+	// firewalls and NATs from dropping idle TCP sessions.
+	// gonet.TCPConn doesn't expose SetKeepAlive, so we access the
+	// underlying gVisor endpoint via reflect+unsafe.
+	if network == "tcp" || network == "tcp4" || network == "tcp6" {
+		enableGvisorTCPKeepalive(tunnel_conn, 30*time.Second, 30*time.Second)
+	}
+
+	return tunnel_conn, nil
+}
+
+// enableGvisorTCPKeepalive enables TCP keepalive on a gVisor gonet.TCPConn
+// by accessing the unexported "ep" field (tcpip.Endpoint) via reflect+unsafe.
+// This is necessary because gonet.TCPConn does not implement net.TCPConn's
+// SetKeepAlive method, causing the standard type assertion to fail silently.
+func enableGvisorTCPKeepalive(tunnel_conn net.Conn, keepalive_idle_duration time.Duration, keepalive_interval_duration time.Duration) {
+	conn_value := reflect.ValueOf(tunnel_conn)
+	if conn_value.Kind() != reflect.Ptr {
+		return
+	}
+	struct_value := conn_value.Elem()
+	endpoint_field := struct_value.FieldByName("ep")
+	if !endpoint_field.IsValid() || !endpoint_field.CanAddr() {
+		return
+	}
+
+	// Access the unexported interface field via unsafe to bypass reflect's
+	// read-only restriction on unexported fields
+	endpoint_pointer := unsafe.Pointer(endpoint_field.UnsafeAddr())
+	gvisor_endpoint := *(*tcpip.Endpoint)(endpoint_pointer)
+	if gvisor_endpoint == nil {
+		return
+	}
+
+	// Enable SO_KEEPALIVE and configure idle/interval timers
+	gvisor_endpoint.SocketOptions().SetKeepAlive(true)
+	keepalive_idle_option := tcpip.KeepaliveIdleOption(keepalive_idle_duration)
+	gvisor_endpoint.SetSockOpt(&keepalive_idle_option)
+	keepalive_interval_option := tcpip.KeepaliveIntervalOption(keepalive_interval_duration)
+	gvisor_endpoint.SetSockOpt(&keepalive_interval_option)
+
+	log.Printf("[tunnel] TCP keepalive enabled on gVisor connection (idle=%s, interval=%s)", keepalive_idle_duration, keepalive_interval_duration)
 }
 
 // UpdateStats updates tunnel statistics from the device

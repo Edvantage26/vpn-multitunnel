@@ -253,6 +253,7 @@ declare global {
           IsDNSConfigured: () => Promise<boolean>
           RestoreDNS: () => Promise<void>
           ConfigureDNS: () => Promise<void>
+          FixDNS: () => Promise<void>
           GetSystemStatus: () => Promise<SystemStatus>
           GetWireGuardConfig: (profileId: string) => Promise<WireGuardConfigDisplay>
           GetConfigFileContent: (profileId: string) => Promise<string>

@@ -204,7 +204,7 @@ function ConnectionTester({ profileId, profileName, isConnected, domainSuffixes,
         </div>
       ) : tcpProxyPorts.length === 0 ? (
         <div className="text-dark-500 text-xs italic">
-          Configure TCP proxy ports first to test connectivity.
+          Configure allowed ports first to test connectivity.
         </div>
       ) : (
         <>
