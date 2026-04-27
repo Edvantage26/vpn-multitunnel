@@ -41,6 +41,7 @@ func (app *App) GetProfiles() []ProfileStatus {
 			TunnelIP:      app.profileService.GetTunnelIP(current_profile.ID),
 			LastError:     app.lastConnectErrors[current_profile.ID],
 			ClientVersion: client_version,
+			AutoConnect:   current_profile.Enabled && current_profile.ShouldAutoConnect(),
 		}
 
 		// Get stats if connected
@@ -82,12 +83,14 @@ func (app *App) populateComputedFields(profile *config.Profile) {
 
 // Connect connects a profile by ID (with UAC elevation if needed)
 func (app *App) Connect(id string) error {
+	app.flipMasterOnIfDisabled()
 	return app.connectInternal(id, true)
 }
 
 // ConnectWithCredentials connects a profile by ID, providing username/password for auth.
 // Saves the credentials to the profile config for future connections.
 func (app *App) ConnectWithCredentials(id string, username string, password string) error {
+	app.flipMasterOnIfDisabled()
 	// Save credentials to profile for future connections
 	profile, profileErr := app.profileService.GetByID(id)
 	if profileErr == nil {
@@ -100,6 +103,17 @@ func (app *App) ConnectWithCredentials(id string, username string, password stri
 
 	app.tunnelManager.SetCredentials(id, username, password)
 	return app.connectInternal(id, true)
+}
+
+// flipMasterOnIfDisabled re-enables the master switch when the user manually
+// initiates a connection while it was off. This keeps the UI toggle in sync
+// with the user's effective intent.
+func (app *App) flipMasterOnIfDisabled() {
+	app.mu.Lock()
+	if !app.masterEnabled {
+		app.masterEnabled = true
+	}
+	app.mu.Unlock()
 }
 
 // ProfileNeedsCredentials returns true if connecting this profile requires username/password
@@ -187,6 +201,14 @@ func (app *App) doConnect(id string, profile *config.Profile, allowElevation boo
 	delete(app.lastConnectErrors, id)
 	app.mu.Unlock()
 
+	// If the master switch was flipped OFF while tunnelManager.Start was running
+	// (typical for OpenVPN which can take 30s+), skip DNS reconfiguration. The
+	// caller (connectInBackground) will tear down the just-started tunnel.
+	if !app.IsMasterEnabled() {
+		log.Printf("doConnect for %s skipping post-connect setup: master is OFF", profile.Name)
+		return nil
+	}
+
 	// Configure system DNS if not already configured and auto-configure is enabled
 	if !app.networkConfig.IsTransparentDNSConfigured() && app.config.Settings.AutoConfigureDNS && app.config.DNSProxy.Enabled {
 		if allowElevation || app.networkConfig.IsServiceConnected() {
@@ -220,6 +242,16 @@ func (app *App) connectInBackground(id string, profile *config.Profile, allowEle
 		}
 	}()
 
+	// If the master switch was turned OFF while this background connect was queued,
+	// abort before doing anything privileged or DNS-touching.
+	if !app.IsMasterEnabled() {
+		log.Printf("Background connect for %s aborted: master switch is OFF", profile.Name)
+		app.mu.Lock()
+		delete(app.connectingProfiles, id)
+		app.mu.Unlock()
+		return
+	}
+
 	connectErr := app.doConnect(id, profile, allowElevation)
 
 	// Auto-retry: if OpenVPN failed because all TAP adapters are in use,
@@ -241,6 +273,15 @@ func (app *App) connectInBackground(id string, profile *config.Profile, allowEle
 		log.Printf("Background connect failed for %s: %v", profile.Name, connectErr)
 	}
 	app.mu.Unlock()
+
+	// Race-guard: if the master switch was flipped OFF while doConnect was running,
+	// undo this connection so we honor the user's intent rather than leaving a stale tunnel.
+	if connectErr == nil && !app.IsMasterEnabled() {
+		log.Printf("Background connect for %s succeeded but master is OFF — disconnecting", profile.Name)
+		if disconnect_err := app.Disconnect(id); disconnect_err != nil {
+			log.Printf("[%s] Post-connect cleanup failed: %v", profile.Name, disconnect_err)
+		}
+	}
 }
 
 // Disconnect disconnects a profile by ID
@@ -249,9 +290,22 @@ func (app *App) Disconnect(id string) error {
 		return err
 	}
 
-	// Restore DNS if this was the last connection
-	if app.tunnelManager.GetConnectedCount() == 0 && app.networkConfig.IsTransparentDNSConfigured() {
-		app.restoreSystemDNS()
+	// Clear stale error so the UI status dot returns to its neutral (gray) state
+	app.mu.Lock()
+	delete(app.lastConnectErrors, id)
+	app.mu.Unlock()
+
+	// Restore DNS if this was the last connection.
+	// Also clear DNS health flags here so we don't carry over a stale "yellow" state
+	// to the next reconnect — the next health check (15 s tick) re-evaluates from scratch.
+	if app.tunnelManager.GetConnectedCount() == 0 {
+		app.mu.Lock()
+		app.dnsHealthIssue = ""
+		app.consecutiveDNSFailures = 0
+		app.mu.Unlock()
+		if app.networkConfig.IsTransparentDNSConfigured() {
+			app.restoreSystemDNS()
+		}
 	}
 
 	// Flush DNS cache so apps stop using stale tunnel routes
@@ -289,6 +343,17 @@ func (app *App) ConnectAll() error {
 // DisconnectAll disconnects all profiles
 func (app *App) DisconnectAll() error {
 	app.tunnelManager.StopAll()
+
+	// Clear stale errors and DNS health flags so UI status dots return to neutral
+	// (gray) and the next reconnect doesn't inherit a yellow "DNS issue" indicator
+	// from a previous session — the network-monitor 15 s tick will re-evaluate.
+	app.mu.Lock()
+	for profile_id := range app.lastConnectErrors {
+		delete(app.lastConnectErrors, profile_id)
+	}
+	app.dnsHealthIssue = ""
+	app.consecutiveDNSFailures = 0
+	app.mu.Unlock()
 
 	// Restore DNS since all VPNs are now disconnected
 	if app.networkConfig.IsTransparentDNSConfigured() {

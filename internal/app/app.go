@@ -55,6 +55,10 @@ type App struct {
 
 	// Cached VPN client version strings (refreshed on startup and after install)
 	cachedOpenVPNVersion string
+
+	// Master switch: when false, the user has disabled all VPN activity.
+	// In-memory only (not persisted) — always starts true. Protected by app.mu.
+	masterEnabled bool
 }
 
 // ProfileStatus represents the status of a profile for the UI
@@ -74,6 +78,7 @@ type ProfileStatus struct {
 	LastError      string `json:"lastError,omitempty"`
 	DNSIssue       string `json:"dnsIssue,omitempty"`
 	ClientVersion  string `json:"clientVersion,omitempty"`
+	AutoConnect    bool   `json:"autoConnect"`
 }
 
 // WireGuardConfigDisplay represents WireGuard config metadata for UI display
@@ -117,6 +122,7 @@ func New() *App {
 		connectingProfiles: make(map[string]bool),
 		lastConnectErrors:  make(map[string]string),
 		dnsStatusCacheTTL:  10 * time.Second, // Cache DNS status for 10 seconds
+		masterEnabled:      true,
 	}
 }
 
@@ -257,6 +263,17 @@ func (app *App) Startup(ctx context.Context) {
 
 		// Connect profiles sequentially
 		for _, profile := range autoConnectProfiles {
+			// Abort if the user already toggled the master OFF — common race when
+			// they hit the toggle right after launch while this loop is mid-flight.
+			if !app.IsMasterEnabled() {
+				log.Printf("Startup auto-connect aborted: master switch was turned OFF")
+				app.mu.Lock()
+				for _, remaining_profile := range autoConnectProfiles {
+					delete(app.connectingProfiles, remaining_profile.ID)
+				}
+				app.mu.Unlock()
+				break
+			}
 			if err := app.connectInternal(profile.ID, false); err != nil {
 				log.Printf("Auto-connect failed for %s: %v", profile.Name, err)
 			}

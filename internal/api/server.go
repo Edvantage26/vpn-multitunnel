@@ -46,6 +46,13 @@ type DebugProvider interface {
 	Disconnect(id string) error
 	GetConnectErrors() map[string]string
 
+	// Master switch
+	IsMasterEnabled() bool
+	SetMasterEnabled(enabled bool) error
+
+	// DNS health diagnostics
+	GetDNSHealthIssue() string
+
 	// OpenVPN
 	GetOpenVPNStatusMap() map[string]any
 	InstallOpenVPN() error
@@ -103,6 +110,8 @@ func (api_server *Server) Start() error {
 	mux.HandleFunc("/api/health", api_server.handleHealth)
 	mux.HandleFunc("/api/openvpn-status", api_server.handleOpenVPNStatus)
 	mux.HandleFunc("/api/openvpn-upgrade", api_server.handleOpenVPNUpgrade)
+	mux.HandleFunc("/api/master-status", api_server.handleMasterStatus)
+	mux.HandleFunc("/api/master-set", api_server.handleMasterSet)
 
 	// CORS middleware
 	handler := corsMiddleware(mux)
@@ -519,6 +528,54 @@ func (api_server *Server) handleVPNDisconnect(response_writer http.ResponseWrite
 		return
 	}
 	writeSuccess(response_writer, map[string]any{"success": true, "profileId": req.ProfileID})
+}
+
+// handleMasterStatus handles GET /api/master-status — returns whether the master switch is on.
+func (api_server *Server) handleMasterStatus(response_writer http.ResponseWriter, http_request *http.Request) {
+	if http_request.Method != http.MethodGet {
+		writeError(response_writer, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	writeSuccess(response_writer, map[string]any{
+		"enabled":        api_server.provider.IsMasterEnabled(),
+		"dnsConfigured":  api_server.provider.IsDNSConfigured(),
+		"dnsHealthIssue": api_server.provider.GetDNSHealthIssue(),
+	})
+}
+
+// handleMasterSet handles POST /api/master-set — toggles the master switch.
+// Body: {"enabled": bool}. OFF disconnects all and restores DNS; ON reconnects auto-connect profiles.
+func (api_server *Server) handleMasterSet(response_writer http.ResponseWriter, http_request *http.Request) {
+	if http_request.Method != http.MethodPost {
+		writeError(response_writer, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var request_body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if decode_err := json.NewDecoder(http_request.Body).Decode(&request_body); decode_err != nil {
+		writeError(response_writer, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if request_body.Enabled == nil {
+		writeError(response_writer, http.StatusBadRequest, "'enabled' field is required (true|false)")
+		return
+	}
+	previous_state := api_server.provider.IsMasterEnabled()
+	if set_err := api_server.provider.SetMasterEnabled(*request_body.Enabled); set_err != nil {
+		writeSuccess(response_writer, map[string]any{
+			"success":  false,
+			"error":    set_err.Error(),
+			"previous": previous_state,
+			"current":  api_server.provider.IsMasterEnabled(),
+		})
+		return
+	}
+	writeSuccess(response_writer, map[string]any{
+		"success":  true,
+		"previous": previous_state,
+		"current":  api_server.provider.IsMasterEnabled(),
+	})
 }
 
 // handleConnectErrors handles GET /api/connect-errors

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import NavBar from './components/NavBar'
 import type { NavView } from './components/NavBar'
 import Sidebar from './components/Sidebar'
@@ -52,6 +52,7 @@ export interface ProfileStatus {
   lastError?: string
   dnsIssue?: string
   clientVersion?: string
+  autoConnect: boolean
 }
 
 export interface ActiveConnection {
@@ -278,6 +279,8 @@ ReorderProfiles: (orderedIDs: string[]) => Promise<void>
           GetDNSQueryLog: (limit: number) => Promise<import('./components/Traffic').DNSLogEntry[]>
           GetProfileTrafficSummaries: () => Promise<import('./components/Traffic').ProfileTrafficSummary[]>
           ClearTrafficLog: () => Promise<void>
+          IsMasterEnabled: () => Promise<boolean>
+          SetMasterEnabled: (enabled: boolean) => Promise<void>
         }
       }
     }
@@ -295,6 +298,9 @@ function App() {
   const [showConfigEditor, setShowConfigEditor] = useState(false)
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
+  const [masterEnabled, setMasterEnabled] = useState(true)
+  const [disconnectingIds, setDisconnectingIds] = useState<Set<string>>(() => new Set())
+  const [connectingMasterIds, setConnectingMasterIds] = useState<Set<string>>(() => new Set())
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   // Credentials modal state
   const [credentialsModal, setCredentialsModal] = useState<{ profileId: string; profileName: string } | null>(null)
@@ -322,9 +328,16 @@ function App() {
     deleteConfig: boolean
   } | null>(null)
 
+  const notificationTimeoutRef = useRef<number | null>(null)
   const showNotification = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message })
-    setTimeout(() => setNotification(null), 3000)
+    if (notificationTimeoutRef.current !== null) {
+      window.clearTimeout(notificationTimeoutRef.current)
+    }
+    notificationTimeoutRef.current = window.setTimeout(() => {
+      setNotification(null)
+      notificationTimeoutRef.current = null
+    }, 3000)
   }
 
   const fetchProfiles = useCallback(async () => {
@@ -367,6 +380,82 @@ function App() {
     }
   }, [])
 
+  const handleToggleMaster = useCallback(async () => {
+    const new_state = !masterEnabled
+    // Optimistically populate the spinner sets so the UI reacts the instant the
+    // user clicks, without waiting for the backend goroutine and the next poll.
+    if (!new_state) {
+      const ids_to_disconnect = new Set<string>()
+      for (const profile_status of profiles) {
+        if (profile_status.connected || profile_status.connecting) {
+          ids_to_disconnect.add(profile_status.id)
+        }
+      }
+      setDisconnectingIds(ids_to_disconnect)
+    } else {
+      const ids_to_connect = new Set<string>()
+      for (const profile_status of profiles) {
+        if (profile_status.autoConnect && !profile_status.connected && !profile_status.connecting) {
+          ids_to_connect.add(profile_status.id)
+        }
+      }
+      setConnectingMasterIds(ids_to_connect)
+    }
+    setMasterEnabled(new_state)
+    try {
+      await window.go.app.App.SetMasterEnabled(new_state)
+      showNotification('success', new_state ? 'VPN activada' : 'VPN desactivada')
+      fetchProfiles()
+      fetchSystemStatus()
+    } catch (err) {
+      setMasterEnabled(!new_state)
+      if (!new_state) setDisconnectingIds(new Set())
+      else setConnectingMasterIds(new Set())
+      showNotification('error', `Error: ${String(err)}`)
+    }
+  }, [masterEnabled, profiles, fetchProfiles, fetchSystemStatus])
+
+  // Drop ids from the disconnecting set as soon as the polled profiles confirm
+  // the disconnection (or once the master goes back to ON, in case of cancel).
+  useEffect(() => {
+    if (disconnectingIds.size === 0) return
+    setDisconnectingIds(previous_set => {
+      let changed = false
+      const next_set = new Set(previous_set)
+      for (const profile_status of profiles) {
+        if (next_set.has(profile_status.id) && !profile_status.connected && !profile_status.connecting) {
+          next_set.delete(profile_status.id)
+          changed = true
+        }
+      }
+      return changed ? next_set : previous_set
+    })
+  }, [profiles, disconnectingIds.size])
+
+  // Drop ids from the master-connecting set once the backend reports them as
+  // either connected (success) or actively connecting (the real spinner takes over).
+  useEffect(() => {
+    if (connectingMasterIds.size === 0) return
+    setConnectingMasterIds(previous_set => {
+      let changed = false
+      const next_set = new Set(previous_set)
+      for (const profile_status of profiles) {
+        if (next_set.has(profile_status.id) && (profile_status.connected || profile_status.connecting)) {
+          next_set.delete(profile_status.id)
+          changed = true
+        }
+      }
+      return changed ? next_set : previous_set
+    })
+  }, [profiles, connectingMasterIds.size])
+
+  // If the user flips the master OFF mid-connect, clear the optimistic spinner set.
+  useEffect(() => {
+    if (!masterEnabled && connectingMasterIds.size > 0) {
+      setConnectingMasterIds(new Set())
+    }
+  }, [masterEnabled, connectingMasterIds.size])
+
   useEffect(() => {
     fetchProfiles()
     fetchSystemStatus()
@@ -374,11 +463,17 @@ function App() {
     window.go.app.App.GetSettings().then((loaded_settings: Settings) => {
       setAdvancedMode(loaded_settings.advancedMode ?? false)
     }).catch(() => {})
+    // Load master switch state and keep it in sync (manual connections re-enable it backend-side)
+    window.go.app.App.IsMasterEnabled().then(setMasterEnabled).catch(() => {})
     const profileInterval = setInterval(fetchProfiles, 2000)
     const statusInterval = setInterval(fetchSystemStatus, 3000)
+    const masterInterval = setInterval(() => {
+      window.go.app.App.IsMasterEnabled().then(setMasterEnabled).catch(() => {})
+    }, 2000)
     return () => {
       clearInterval(profileInterval)
       clearInterval(statusInterval)
+      clearInterval(masterInterval)
     }
   }, [fetchProfiles, fetchSystemStatus])
 
@@ -631,6 +726,10 @@ function App() {
           updateDownloading={updateDownloading}
           onUpdateInstall={handleUpdateInstall}
           onOpenChangelog={() => setShowChangelogModal(true)}
+          masterEnabled={masterEnabled}
+          onToggleMaster={handleToggleMaster}
+          disconnectingIds={disconnectingIds}
+          connectingMasterIds={connectingMasterIds}
         />
       )}
 

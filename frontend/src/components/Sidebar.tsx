@@ -12,6 +12,10 @@ interface SidebarProps {
   updateDownloading?: boolean
   onUpdateInstall?: () => void
   onOpenChangelog?: () => void
+  masterEnabled: boolean
+  onToggleMaster: () => void
+  disconnectingIds: Set<string>
+  connectingMasterIds: Set<string>
 }
 
 function Sidebar({
@@ -25,6 +29,10 @@ function Sidebar({
   updateDownloading,
   onUpdateInstall,
   onOpenChangelog,
+  masterEnabled,
+  onToggleMaster,
+  disconnectingIds,
+  connectingMasterIds,
 }: SidebarProps) {
   const connectedCount = profiles.filter(profile => profile.connected).length
   const [draggedId, setDraggedId] = useState<string | null>(null)
@@ -105,13 +113,32 @@ function Sidebar({
     <aside className="w-72 bg-dark-800 border-r border-dark-700 flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-dark-700" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <h1 className="text-xl font-bold text-white flex items-center gap-2">
-          <svg className="w-6 h-6 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-          VPN MultiTunnel
-        </h1>
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            <svg className="w-6 h-6 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            VPN MultiTunnel
+          </h1>
+          <button
+            type="button"
+            onClick={onToggleMaster}
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            title={masterEnabled ? 'Desactivar VPN' : 'Activar VPN'}
+            aria-label={masterEnabled ? 'Desactivar VPN' : 'Activar VPN'}
+            aria-pressed={masterEnabled}
+            className={`relative inline-flex shrink-0 w-11 h-6 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/50 ${
+              masterEnabled ? 'bg-primary-500' : 'bg-dark-600'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                masterEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'
+              }`}
+            />
+          </button>
+        </div>
         <p className="text-sm text-dark-400 mt-1">
           {connectedCount > 0
             ? `${connectedCount} tunnel${connectedCount > 1 ? 's' : ''} active`
@@ -152,9 +179,12 @@ function Sidebar({
                   : 'border-l-2 border-transparent'
               } ${draggedId === profile.id ? 'opacity-40' : ''} ${getDropIndicatorClass(profile.id)}`}
             >
-              {/* Status indicator - spinner when connecting, green when connected, red on error */}
-              {profile.connecting ? (
-                <div className="w-3 h-3 flex-shrink-0 rounded-full border-2 border-primary-500 border-t-transparent animate-spin" />
+              {/* Status indicator - spinner when connecting/disconnecting, green when connected, red on error */}
+              {profile.connecting || disconnectingIds.has(profile.id) || connectingMasterIds.has(profile.id) ? (
+                <div
+                  className="w-3 h-3 flex-shrink-0 rounded-full border-2 border-primary-500 border-t-transparent animate-spin"
+                  title={disconnectingIds.has(profile.id) ? 'Desconectando…' : 'Conectando…'}
+                />
               ) : (
                 <div className={`w-3 h-3 rounded-full flex-shrink-0 ${
                   profile.connected
