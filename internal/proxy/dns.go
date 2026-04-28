@@ -76,20 +76,34 @@ func listenPacketWithReuseAddr(network, address string) (net.PacketConn, error) 
 
 // Start starts the DNS proxy on both IPv4 and IPv6
 func (dns_proxy *DNSProxy) Start() error {
+	structured_logger := debug.GetLogger()
 	handler := dns.HandlerFunc(dns_proxy.handleDNS)
 
 	// Start IPv4 server on configured loopback address (default: 127.0.0.53)
 	listenAddr := dns_proxy.config.GetListenAddress()
 	addrV4 := fmt.Sprintf("%s:%d", listenAddr, dns_proxy.config.ListenPort)
 
+	structured_logger.Info("dns", "DNS proxy bind attempt", map[string]any{
+		"address": addrV4,
+		"mode":    "SO_REUSEADDR",
+	})
+
 	// Pre-bind with SO_REUSEADDR to coexist with SharedAccess/ICS on 0.0.0.0:53.
-	// The specific-address binding (127.0.0.53) takes priority over the wildcard (0.0.0.0)
-	// for traffic directed to our address.
+	// On Windows, the specific-address binding (127.0.0.53) takes priority over the
+	// wildcard (0.0.0.0) for traffic directed to our address — verified empirically.
 	connV4, err := listenPacketWithReuseAddr("udp4", addrV4)
 	if err != nil {
+		structured_logger.Error("dns", "DNS proxy bind FAILED", map[string]any{
+			"address": addrV4,
+			"error":   err.Error(),
+		})
 		return fmt.Errorf("cannot bind DNS proxy to %s: %w (is the loopback IP configured?)", addrV4, err)
 	}
 	dns_proxy.connV4 = connV4
+	structured_logger.Info("dns", "DNS proxy bind SUCCESS", map[string]any{
+		"address":   addrV4,
+		"localAddr": connV4.LocalAddr().String(),
+	})
 
 	dns_proxy.server = &dns.Server{
 		PacketConn: connV4,
@@ -99,12 +113,21 @@ func (dns_proxy *DNSProxy) Start() error {
 	// Channel to capture startup errors
 	errChan := make(chan error, 1)
 	go func() {
-		if err := dns_proxy.server.ActivateAndServe(); err != nil {
-			log.Printf("DNS proxy IPv4 error: %v", err)
+		serve_err := dns_proxy.server.ActivateAndServe()
+		if serve_err != nil {
+			structured_logger.Error("dns", "DNS proxy ActivateAndServe exited with error", map[string]any{
+				"address": addrV4,
+				"error":   serve_err.Error(),
+			})
+			log.Printf("DNS proxy IPv4 error: %v", serve_err)
 			select {
-			case errChan <- err:
+			case errChan <- serve_err:
 			default:
 			}
+		} else {
+			structured_logger.Warn("dns", "DNS proxy ActivateAndServe returned nil unexpectedly", map[string]any{
+				"address": addrV4,
+			})
 		}
 	}()
 
@@ -114,15 +137,38 @@ func (dns_proxy *DNSProxy) Start() error {
 	case err := <-errChan:
 		dns_proxy.connV4.Close()
 		dns_proxy.connV4 = nil
+		structured_logger.Error("dns", "DNS proxy IPv4 failed to start", map[string]any{
+			"address": addrV4,
+			"error":   err.Error(),
+		})
 		return fmt.Errorf("DNS proxy IPv4 failed to start on %s: %w", addrV4, err)
 	default:
 		// No error, continue
+	}
+
+	// Self-test: send a probe query to ourselves and verify our handler receives it.
+	// Confirms the listener actually wins packets vs any wildcard binding (e.g. ICS).
+	if probe_err := dns_proxy.probeListener(addrV4); probe_err != nil {
+		structured_logger.Error("dns", "DNS proxy self-test FAILED — listener bound but not receiving traffic", map[string]any{
+			"address": addrV4,
+			"error":   probe_err.Error(),
+			"hint":    "another process may be intercepting packets to this address",
+		})
+		// Don't fail Start — log loudly so the auto-fix loop and operator can see it.
+	} else {
+		structured_logger.Info("dns", "DNS proxy self-test passed", map[string]any{
+			"address": addrV4,
+		})
 	}
 
 	// Start IPv6 server on [::1]
 	addrV6 := fmt.Sprintf("[::1]:%d", dns_proxy.config.ListenPort)
 	connV6, err := listenPacketWithReuseAddr("udp6", addrV6)
 	if err != nil {
+		structured_logger.Warn("dns", "DNS proxy IPv6 bind failed", map[string]any{
+			"address": addrV6,
+			"error":   err.Error(),
+		})
 		log.Printf("DNS proxy IPv6 bind warning: %v (IPv6 will be unavailable)", err)
 	} else {
 		dns_proxy.connV6 = connV6
@@ -132,15 +178,49 @@ func (dns_proxy *DNSProxy) Start() error {
 		}
 
 		go func() {
-			if err := dns_proxy.serverV6.ActivateAndServe(); err != nil {
-				log.Printf("DNS proxy IPv6 error: %v", err)
+			if serve_v6_err := dns_proxy.serverV6.ActivateAndServe(); serve_v6_err != nil {
+				structured_logger.Error("dns", "DNS proxy IPv6 ActivateAndServe exited", map[string]any{
+					"address": addrV6,
+					"error":   serve_v6_err.Error(),
+				})
+				log.Printf("DNS proxy IPv6 error: %v", serve_v6_err)
 			}
 		}()
 	}
 
+	structured_logger.Info("dns", "DNS proxy started", map[string]any{
+		"addressV4": addrV4,
+		"addressV6": addrV6,
+	})
 	log.Printf("DNS proxy started on %s and %s", addrV4, addrV6)
 	return nil
 }
+
+// probeListener verifies the listener actually receives UDP traffic destined for its
+// bound address. Sends a magic-name DNS query that handleDNS short-circuits and waits
+// for the synthetic answer. Distinguishes "bind succeeded" from "bind succeeded AND
+// our process is winning packet delivery vs. any other listener on this port".
+func (dns_proxy *DNSProxy) probeListener(addr string) error {
+	probe_client := &dns.Client{Net: "udp", Timeout: 1500 * time.Millisecond}
+	probe_query := new(dns.Msg)
+	probe_query.SetQuestion(dnsProxySelfTestName, dns.TypeA)
+	probe_response, _, exchange_err := probe_client.Exchange(probe_query, addr)
+	if exchange_err != nil {
+		return fmt.Errorf("probe exchange failed: %w", exchange_err)
+	}
+	if probe_response == nil || probe_response.Rcode != dns.RcodeSuccess {
+		return fmt.Errorf("probe got unexpected rcode")
+	}
+	if len(probe_response.Answer) == 0 {
+		return fmt.Errorf("probe got no answer (a different process may have responded)")
+	}
+	return nil
+}
+
+// dnsProxySelfTestName is a magic DNS name used by probeListener. handleDNS
+// recognizes this name and returns a synthetic answer immediately, bypassing rules
+// and upstream resolution. The name is intentionally invalid TLD so it cannot leak.
+const dnsProxySelfTestName = "vpnmt-proxy-selftest.invalid."
 
 // Stop stops the DNS proxy (both IPv4 and IPv6)
 func (dns_proxy *DNSProxy) Stop() {
@@ -181,6 +261,20 @@ func (dns_proxy *DNSProxy) GetListenAddress() string {
 
 func (dns_proxy *DNSProxy) handleDNS(response_writer dns.ResponseWriter, request *dns.Msg) {
 	if len(request.Question) == 0 {
+		return
+	}
+
+	// Self-test short-circuit: respond synthetically without rule lookup or upstream
+	// resolution. Used by probeListener to confirm we win packet delivery on this port.
+	if request.Question[0].Name == dnsProxySelfTestName {
+		self_test_response := new(dns.Msg)
+		self_test_response.SetReply(request)
+		self_test_response.Authoritative = true
+		self_test_record, rr_err := dns.NewRR(dnsProxySelfTestName + " 0 IN A 127.0.0.1")
+		if rr_err == nil {
+			self_test_response.Answer = []dns.RR{self_test_record}
+		}
+		_ = response_writer.WriteMsg(self_test_response)
 		return
 	}
 

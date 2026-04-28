@@ -293,9 +293,8 @@ func (app *App) checkDNSHealth() {
 		if app.consecutiveDNSFailures >= consecutiveFailuresBeforeAlert {
 			app.dnsHealthIssue = fmt.Sprintf("DNS proxy not responding on %s: %v", dns_proxy_address, query_err)
 			log.Printf("[network-monitor] DNS health issue: %s", app.dnsHealthIssue)
-		}
-		// Attempt auto-repair after sustained failures
-		if app.consecutiveDNSFailures == consecutiveFailuresBeforeAlert {
+			// Auto-repair on every tick while broken — restart is cheap and the next
+			// tick (15s later) will clear the issue if the proxy comes back healthy.
 			app.mu.Unlock()
 			app.attemptDNSProxyRestart()
 			return
@@ -343,10 +342,15 @@ func (app *App) attemptDNSProxyRestart() {
 	log.Printf("[network-monitor] Attempting DNS proxy restart on port 53...")
 
 	if restart_err := app.tunnelManager.RestartDNSProxyOnPort(53); restart_err != nil {
-		log.Printf("[network-monitor] DNS proxy restart failed: %v", restart_err)
-		return
+		// RestartDNSProxyOnPort fails fast if the proxy is nil (i.e. initial bind
+		// failed at boot or the proxy was never started). Fall back to a full
+		// re-init via RestartDNSProxy, which Stops (no-op if nil) then re-creates
+		// the proxy from scratch via StartDNSProxy.
+		log.Printf("[network-monitor] DNS proxy restart-on-port failed (%v); falling back to full re-init", restart_err)
+		app.config.DNSProxy.ListenPort = 53
+		app.tunnelManager.RestartDNSProxy(&app.config.DNSProxy)
 	}
 
 	system.FlushDNSCache()
-	log.Printf("[network-monitor] DNS proxy restarted successfully")
+	log.Printf("[network-monitor] DNS proxy restart attempt completed")
 }

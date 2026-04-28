@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -216,6 +217,22 @@ func (app *App) doConnect(id string, profile *config.Profile, allowElevation boo
 		} else {
 			log.Printf("DNS not configured (no elevation allowed and service not connected)")
 		}
+	}
+
+	// When the DNS proxy is in charge, OpenVPN's pushed DNS on its TAP adapter
+	// would otherwise win the metric race against our system-DNS proxy entry,
+	// and Windows would route every lookup through that pushed server first
+	// (often unreachable → 25 s timeouts per query). openvpnserv2 keeps
+	// re-applying the pushed DNS asynchronously so a one-shot ResetDNS gets
+	// overwritten. We point the TAP at our proxy instead, repeatedly for a
+	// short window to outlast openvpnserv2's apply cycle.
+	if app.config.DNSProxy.Enabled && profile.GetVPNType() == config.VPNTypeOpenVPN {
+		go func() {
+			for retry_attempt := 0; retry_attempt < 6; retry_attempt++ {
+				app.networkConfig.PointActiveOpenVPNAdaptersAtProxy()
+				time.Sleep(2 * time.Second)
+			}
+		}()
 	}
 
 	// Flush DNS cache so apps pick up new tunnel routes

@@ -103,12 +103,22 @@ func NewOpenVPNTunnel(profileID string, ovpnConfig *config.OpenVPNConfig, config
 	// Build command arguments
 	// --management-query-passwords: credentials are provided via management interface, not stdin
 	// --auth-retry interact: on auth failure, ask again via management instead of exiting
+	// --pull-filter ignore "dhcp-option DNS|DNS6|DOMAIN": discard DNS pushed by the
+	//   OpenVPN server. Our DNS proxy on 127.0.0.53 is the single source of truth
+	//   for DNS routing; letting OpenVPN write the pushed server onto the TAP
+	//   adapter causes Windows to query that adapter first (lowest metric wins),
+	//   bypassing the proxy and stalling lookups for ~25 s when that pushed
+	//   server can only be reached through a route the user hasn't installed.
 	commandArgs := []string{
 		"--config", configFilePath,
 		"--management", "127.0.0.1", fmt.Sprintf("%d", managementPort),
 		"--management-query-passwords",
 		"--auth-retry", "interact",
 		"--disable-dco",
+		"--pull-filter", "ignore", "dhcp-option DNS",
+		"--pull-filter", "ignore", "dhcp-option DNS6",
+		"--pull-filter", "ignore", "dhcp-option DOMAIN",
+		"--pull-filter", "ignore", "dhcp-option DOMAIN-SEARCH",
 	}
 
 	ovpnTunnel.Process = exec.Command(openVPNBinaryPath, commandArgs...)

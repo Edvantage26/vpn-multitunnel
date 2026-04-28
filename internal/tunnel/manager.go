@@ -42,7 +42,14 @@ func NewManager(cfg *config.AppConfig) *Manager {
 	// Build DNS rules from profiles and start DNS proxy if enabled
 	cfg.DNSProxy.Rules = config.BuildDNSRulesFromProfiles(cfg.Profiles)
 	if cfg.DNSProxy.Enabled {
-		tunnel_manager.proxyManager.StartDNSProxy(&cfg.DNSProxy, tunnel_manager.getTunnelForProfile, tunnel_manager.GetDNSServerForProfile)
+		if start_err := tunnel_manager.proxyManager.StartDNSProxy(&cfg.DNSProxy, tunnel_manager.getTunnelForProfile, tunnel_manager.GetDNSServerForProfile); start_err != nil {
+			debug.GetLogger().Error("dns", "Initial DNS proxy startup failed at boot", map[string]any{
+				"error":      start_err.Error(),
+				"listenPort": cfg.DNSProxy.ListenPort,
+				"hint":       "the network monitor auto-fix loop will retry every 15s",
+			})
+			log.Printf("[tunnel-manager] Initial DNS proxy startup failed: %v (will be retried by network monitor)", start_err)
+		}
 	}
 
 	// Start TCP proxy if enabled

@@ -966,13 +966,26 @@ func (network_config *NetworkConfig) setDNSElevated(interfaceName, dnsAddress st
 	return RunElevated("powershell", args)
 }
 
-// RestoreTransparentDNS restores the original DNS configuration and restarts DNS Client
+// RestoreTransparentDNS restores the original DNS configuration and restarts DNS Client.
+//
+// Defensive path: if our internal flag says "not configured" but the active
+// interface's DNS actually points at our proxy address, the flag is stale —
+// usually because the system was left configured by a previous app session.
+// In that case we don't have a captured original DNS to restore, so we reset
+// the active interface to DHCP and clear our IPv6 ::1 override. This unblocks
+// resolution after the user toggles the master OFF.
 func (network_config *NetworkConfig) RestoreTransparentDNS() error {
 	network_config.mu.Lock()
 	defer network_config.mu.Unlock()
 
 	if !network_config.dnsConfigured {
-		return nil // Nothing to restore
+		network_config.mu.Unlock()
+		recovered := network_config.recoverStaleTransparentDNS()
+		network_config.mu.Lock()
+		if recovered {
+			log.Printf("Transparent DNS recovered (flag was stale, system was pointing at proxy)")
+		}
+		return nil
 	}
 
 	var lastErr error
@@ -1033,8 +1046,167 @@ func (network_config *NetworkConfig) RestoreTransparentDNS() error {
 	network_config.originalDNS = make(map[string][]string)
 	network_config.originalDNSv6 = make(map[string][]string)
 	network_config.dnsConfigured = false
+
+	// Sweep stale DNS off OpenVPN TAP adapters left over from disconnected
+	// sessions — Windows uses adapter metric to pick which DNS to query first,
+	// so a dead TAP with the VPN's pushed DNS server can stall every lookup
+	// until it times out (10–25 s/query). Doing this last is safe: if any
+	// OpenVPN profile is connected, its TAP will have a fresh IPv4 address
+	// and we skip it.
+	network_config.mu.Unlock()
+	network_config.clearStaleOpenVPNAdapterDNS()
+	network_config.mu.Lock()
+
 	log.Printf("Transparent DNS restored")
 	return lastErr
+}
+
+// clearStaleOpenVPNAdapterDNS resets DNS on any OpenVPN-named adapter that
+// has DNS servers configured but no IPv4 address (i.e., not currently in use
+// by an active tunnel). Caller must NOT hold network_config.mu.
+func (network_config *NetworkConfig) clearStaleOpenVPNAdapterDNS() {
+	network_config.clearOpenVPNAdapterDNS(false)
+}
+
+// ClearAllOpenVPNAdapterDNS resets DNS on every OpenVPN-named adapter, including
+// those currently connected. Used right after a tunnel comes up while our DNS
+// proxy is in charge of resolution — leaving the TAP's pushed DNS in place
+// would let Windows route DNS queries to it (low metric), bypassing the proxy
+// and stalling lookups when that pushed server doesn't respond.
+func (network_config *NetworkConfig) ClearAllOpenVPNAdapterDNS() {
+	network_config.clearOpenVPNAdapterDNS(true)
+}
+
+// PointActiveOpenVPNAdaptersAtProxy overrides the DNS of every connected
+// OpenVPN TAP adapter so it points at our DNS proxy instead of whatever the
+// server pushed. We do this because:
+//
+//  1. Windows picks an adapter for DNS resolution by metric, and the TAP
+//     usually wins — so we cannot rely on Wi-Fi's proxy DNS being used.
+//  2. openvpnserv2 keeps re-applying the pushed DNS asynchronously, so a
+//     plain ResetDNS gets overwritten seconds later.
+//
+// Hijacking the TAP to point at the proxy is the only stable answer: whatever
+// adapter Windows chooses first still goes through 127.0.0.53. Caller must
+// NOT hold network_config.mu.
+func (network_config *NetworkConfig) PointActiveOpenVPNAdaptersAtProxy() {
+	dns_proxy_addr := network_config.dnsProxyAddress
+	if dns_proxy_addr == "" {
+		dns_proxy_addr = "127.0.0.53"
+	}
+
+	adapter_list, list_err := GetAllAdapters()
+	if list_err != nil {
+		log.Printf("PointActiveOpenVPNAdaptersAtProxy: failed to list adapters: %v", list_err)
+		return
+	}
+	for _, adapter_entry := range adapter_list {
+		lower_name := strings.ToLower(adapter_entry.Name)
+		if !strings.Contains(lower_name, "openvpn") {
+			continue
+		}
+		// Only touch adapters with an actively-assigned IPv4 (i.e., a tunnel
+		// is up on this TAP). Inactive adapters are handled by the disconnect-
+		// time cleanup path.
+		if len(adapter_entry.IPv4Addrs) == 0 {
+			continue
+		}
+		// Skip if already pointing at the proxy.
+		already_correct := false
+		for _, dns_entry := range adapter_entry.DNSServers {
+			if dns_entry == dns_proxy_addr {
+				already_correct = true
+				break
+			}
+		}
+		if already_correct {
+			continue
+		}
+		log.Printf("Repointing DNS on connected OpenVPN adapter %q to proxy %s (was %v)", adapter_entry.Name, dns_proxy_addr, adapter_entry.DNSServers)
+		if set_err := network_config.SetDNS(adapter_entry.Name, []string{dns_proxy_addr}); set_err != nil {
+			log.Printf("Failed to repoint DNS on %q: %v", adapter_entry.Name, set_err)
+		}
+	}
+}
+
+func (network_config *NetworkConfig) clearOpenVPNAdapterDNS(includeActive bool) {
+	adapter_list, list_err := GetAllAdapters()
+	if list_err != nil {
+		log.Printf("clearOpenVPNAdapterDNS: failed to list adapters: %v", list_err)
+		return
+	}
+	for _, adapter_entry := range adapter_list {
+		lower_name := strings.ToLower(adapter_entry.Name)
+		if !strings.Contains(lower_name, "openvpn") {
+			continue
+		}
+		// Skip adapters with an IPv4 address only when the caller doesn't want
+		// to touch active tunnels (typical for the "post-disconnect cleanup" path).
+		if !includeActive && len(adapter_entry.IPv4Addrs) > 0 {
+			continue
+		}
+		// Skip adapters that have no real DNS configured. Microsoft's
+		// "fec0:0:0:ffff::1/2/3" site-local placeholders show up as IPv6 DNS
+		// entries on every adapter — they aren't ours to clear.
+		has_real_dns := false
+		for _, dns_entry := range adapter_entry.DNSServers {
+			if !strings.HasPrefix(dns_entry, "fec0:") {
+				has_real_dns = true
+				break
+			}
+		}
+		if !has_real_dns {
+			continue
+		}
+		log.Printf("Clearing DNS on OpenVPN adapter %q (servers=%v, hasIPv4=%v)", adapter_entry.Name, adapter_entry.DNSServers, len(adapter_entry.IPv4Addrs) > 0)
+		if reset_err := network_config.ResetDNS(adapter_entry.Name); reset_err != nil {
+			log.Printf("Failed to clear DNS on %q: %v", adapter_entry.Name, reset_err)
+		}
+	}
+}
+
+// recoverStaleTransparentDNS handles the "flag false, system actually configured" case.
+// Returns true if it actively reset the active interface DNS.
+// Caller must NOT hold network_config.mu (this calls SetDNS/ResetDNS which acquire the service client).
+func (network_config *NetworkConfig) recoverStaleTransparentDNS() bool {
+	active_interface, get_err := network_config.GetActiveNetworkInterface()
+	if get_err != nil || active_interface == "" {
+		return false
+	}
+
+	current_dns_servers, dns_err := network_config.GetCurrentDNS(active_interface)
+	if dns_err != nil || len(current_dns_servers) == 0 {
+		return false
+	}
+
+	dns_proxy_addr := network_config.dnsProxyAddress
+	if dns_proxy_addr == "" {
+		dns_proxy_addr = "127.0.0.53"
+	}
+
+	pointing_at_proxy := false
+	for _, dns_entry := range current_dns_servers {
+		if dns_entry == dns_proxy_addr {
+			pointing_at_proxy = true
+			break
+		}
+	}
+	if !pointing_at_proxy {
+		return false
+	}
+
+	log.Printf("Stale DNS detected on %q (servers=%v, proxy=%s) — resetting to DHCP", active_interface, current_dns_servers, dns_proxy_addr)
+	// ResetDNS uses Set-DnsClientServerAddress -ResetServerAddresses without an
+	// AddressFamily filter, which clears both IPv4 and IPv6 in one call — so the
+	// stale "::1" IPv6 entry left by SetupTransparentDNS gets removed too.
+	if reset_err := network_config.ResetDNS(active_interface); reset_err != nil {
+		log.Printf("Defensive DNS reset failed: %v", reset_err)
+		return false
+	}
+	// Also sweep OpenVPN TAP adapters to remove any stale DNS that would
+	// poison the resolver via interface metrics.
+	network_config.clearStaleOpenVPNAdapterDNS()
+	return true
 }
 
 // RunElevated runs a command with UAC elevation (prompts user)
