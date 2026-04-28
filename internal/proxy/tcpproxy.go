@@ -122,7 +122,7 @@ func (tcp_proxy *TCPProxy) Start() error {
 
 			tcp_proxy.listeners[addr] = listener
 			tcp_proxy.wg.Add(1)
-			go tcp_proxy.acceptLoop(listener, profileID, tunnelIP, port)
+			go tcp_proxy.acceptLoop(listener, tunnelIP, port)
 		}
 	}
 
@@ -148,7 +148,7 @@ func (tcp_proxy *TCPProxy) Stop() {
 	log.Printf("TCP proxy stopped")
 }
 
-func (tcp_proxy *TCPProxy) acceptLoop(listener net.Listener, profileID string, tunnelIP string, port int) {
+func (tcp_proxy *TCPProxy) acceptLoop(listener net.Listener, tunnelIP string, port int) {
 	defer tcp_proxy.wg.Done()
 
 	for {
@@ -165,32 +165,33 @@ func (tcp_proxy *TCPProxy) acceptLoop(listener net.Listener, profileID string, t
 			}
 		}
 
-		go tcp_proxy.handleConnection(conn, profileID, tunnelIP, port)
+		go tcp_proxy.handleConnection(conn, tunnelIP, port)
 	}
 }
 
 // InternetProfileID is the special profile ID used for non-tunnel internet traffic
 const InternetProfileID = "__internet__"
 
-func (tcp_proxy *TCPProxy) handleConnection(conn net.Conn, profileID string, tunnelIP string, port int) {
+func (tcp_proxy *TCPProxy) handleConnection(conn net.Conn, tunnelIP string, port int) {
 	defer conn.Close()
 
-	debug.Debug("proxy", fmt.Sprintf("Connection from %s to %s:%d (profile: %s)", conn.RemoteAddr(), tunnelIP, port, profileID), map[string]any{
-		"profileId": profileID,
-		"tunnelIP":  tunnelIP,
-		"port":      port,
-	})
-
-	// Look up the host mapping to find the real destination
+	// mapping.ProfileID is the single source of truth — loopback IPs can be reassigned across profiles, so any profileID captured by acceptLoop's closure may be stale.
 	mapping := tcp_proxy.hostMapping.GetByTunnelIP(tunnelIP)
 	if mapping == nil {
 		debug.Warn("proxy", fmt.Sprintf("No host mapping for tunnel IP %s — mapping may have expired (TTL 30m)", tunnelIP), map[string]any{
-			"profileId": profileID,
-			"tunnelIP":  tunnelIP,
-			"port":      port,
+			"tunnelIP": tunnelIP,
+			"port":     port,
 		})
 		return
 	}
+	profileID := mapping.ProfileID
+
+	debug.Debug("proxy", fmt.Sprintf("Connection from %s to %s:%d (hostname: %s, profile: %s)", conn.RemoteAddr(), tunnelIP, port, mapping.Hostname, profileID), map[string]any{
+		"profileId": profileID,
+		"tunnelIP":  tunnelIP,
+		"port":      port,
+		"hostname":  mapping.Hostname,
+	})
 
 	// Sniff the first bytes to detect TLS SNI or WebSocket upgrade
 	protocol_result, sniff_error := ParseConnectionProtocol(conn)
@@ -463,7 +464,7 @@ func (tcp_proxy *TCPProxy) AddListenerForIP(ip string, profileID string) error {
 
 		tcp_proxy.listeners[addr] = listener
 		tcp_proxy.wg.Add(1)
-		go tcp_proxy.acceptLoop(listener, profileID, ip, port)
+		go tcp_proxy.acceptLoop(listener, ip, port)
 		log.Printf("TCP proxy: added listener on %s", addr)
 	}
 
